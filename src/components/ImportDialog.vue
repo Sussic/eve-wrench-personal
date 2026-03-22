@@ -14,6 +14,9 @@ import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { FilePlus, AlertTriangle, CheckCircle } from 'lucide-vue-next'
 import type { ImportAnalysis } from '@/types'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
     open: boolean
@@ -101,10 +104,9 @@ function handleConfirm() {
     <AlertDialog :open="open">
         <AlertDialogContent class="max-w-lg">
             <AlertDialogHeader>
-                <AlertDialogTitle>Import Settings</AlertDialogTitle>
+                <AlertDialogTitle>{{ t('importDialog.title') }}</AlertDialogTitle>
                 <AlertDialogDescription>
-                    Found {{ analysis.total_files }} file(s) in the archive.
-                    Review and select which conflicts to overwrite.
+                    {{ t('importDialog.foundFiles', { count: analysis.total_files }) }}
                 </AlertDialogDescription>
             </AlertDialogHeader>
 
@@ -114,7 +116,7 @@ function handleConfirm() {
                     <div v-if="analysis.new_files.length > 0">
                         <div class="mb-1.5 flex items-center gap-2">
                             <FilePlus class="size-4 text-green-500" />
-                            <span class="text-sm font-medium">New files</span>
+                            <span class="text-sm font-medium">{{ t('importDialog.newFiles') }}</span>
                             <Badge variant="secondary">{{
                                 analysis.new_files.length
                             }}</Badge>
@@ -144,7 +146,7 @@ function handleConfirm() {
                     <div v-if="analysis.conflicts.length > 0">
                         <div class="mb-1.5 flex items-center gap-2">
                             <AlertTriangle class="size-4 text-yellow-500" />
-                            <span class="text-sm font-medium">Conflicts</span>
+                            <span class="text-sm font-medium">{{ t('importDialog.conflicts') }}</span>
                             <Badge variant="destructive">{{
                                 analysis.conflicts.length
                             }}</Badge>
@@ -153,7 +155,7 @@ function handleConfirm() {
                                 @click="toggleAll(!allSelected)"
                             >
                                 {{
-                                    allSelected ? 'Deselect all' : 'Select all'
+                                    allSelected ? t('importDialog.deselectAll') : t('importDialog.selectAll')
                                 }}
                             </button>
                         </div>
@@ -190,7 +192,7 @@ function handleConfirm() {
                     <div v-if="analysis.unchanged.length > 0">
                         <div class="mb-1.5 flex items-center gap-2">
                             <CheckCircle class="size-4 text-muted-foreground" />
-                            <span class="text-sm font-medium">Unchanged</span>
+                            <span class="text-sm font-medium">{{ t('importDialog.unchanged') }}</span>
                             <Badge variant="outline">{{
                                 analysis.unchanged.length
                             }}</Badge>
@@ -220,17 +222,17 @@ function handleConfirm() {
 
             <AlertDialogFooter>
                 <Button variant="outline" @click="emit('cancel')">
-                    Cancel
+                    {{ t('common.cancel') }}
                 </Button>
                 <Button @click="handleConfirm">
-                    Import
+                    {{ t('importExport.import') }}
                     <template
                         v-if="
                             analysis.conflicts.length > 0 &&
                             selectedConflicts.size > 0
                         "
                     >
-                        ({{ selectedConflicts.size }} overwrite)
+                        ({{ selectedConflicts.size }} {{ t('importDialog.overwrite') }})
                     </template>
                 </Button>
             </AlertDialogFooter>

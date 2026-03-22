@@ -16,6 +16,7 @@ import {
     RotateCcw,
     Download,
     Upload,
+    Languages
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +32,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useI18n } from '@/composables/useI18n'
 
 defineProps<{
     loading: boolean
@@ -47,6 +49,7 @@ const emit = defineEmits<{
     importSettings: []
 }>()
 
+const { t, locale, languages, changeLanguage } = useI18n()
 const appWindow = getCurrentWindow()
 const isMac = ref(true)
 const isMaximized = ref(false)
@@ -103,20 +106,16 @@ async function close() {
                         variant="ghost"
                         size="icon"
                         class="size-8"
-                        title="Settings"
+                        :title="t('titleBar.settings')"
                     >
                         <Settings class="size-4" />
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" class="w-64">
-                    <DropdownMenuLabel>EVE Settings Folder</DropdownMenuLabel>
+                    <DropdownMenuLabel>{{ t('settings.eveSettingsFolder') }}</DropdownMenuLabel>
                     <DropdownMenuItem @click="emit('selectEvePath')">
                         <FolderOpen class="mr-2 size-4" />
-                        {{
-                            customEvePath
-                                ? 'Change folder...'
-                                : 'Set custom folder...'
-                        }}
+                        {{ customEvePath ? t('settings.changeFolder') : t('settings.setCustomPath') }}
                     </DropdownMenuItem>
                     <template v-if="customEvePath">
                         <DropdownMenuSeparator />
@@ -127,18 +126,30 @@ async function close() {
                         </DropdownMenuLabel>
                         <DropdownMenuItem @click="emit('clearEvePath')">
                             <RotateCcw class="mr-2 size-4" />
-                            Reset to default
+                            {{ t('settings.resetToDefault') }}
                         </DropdownMenuItem>
                     </template>
                     <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Import / Export</DropdownMenuLabel>
+                    <DropdownMenuLabel>{{ t('importExport.import') }} / {{ t('importExport.export') }}</DropdownMenuLabel>
                     <DropdownMenuItem @click="emit('exportSettings')">
                         <Download class="mr-2 size-4" />
-                        Export settings...
+                        {{ t('importExport.exportSettings') }}
                     </DropdownMenuItem>
                     <DropdownMenuItem @click="emit('importSettings')">
                         <Upload class="mr-2 size-4" />
-                        Import settings...
+                        {{ t('importExport.importSettings') }}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>{{ t('settings.language') }}</DropdownMenuLabel>
+                    <DropdownMenuItem 
+                        v-for="lang in languages" 
+                        :key="lang.code"
+                        @click="changeLanguage(lang.code)"
+                        :class="{ 'bg-muted': locale === lang.code }"
+                    >
+                        <Languages class="mr-2 size-4" />
+                        {{ lang.name }}
+                        <span v-if="locale === lang.code" class="ml-auto">✓</span>
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
@@ -155,7 +166,7 @@ async function close() {
                         <Moon v-else class="size-4" />
                     </Button>
                 </TooltipTrigger>
-                <TooltipContent>Toggle theme</TooltipContent>
+                <TooltipContent>{{ t('titleBar.toggleTheme') }}</TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -173,7 +184,7 @@ async function close() {
                         />
                     </Button>
                 </TooltipTrigger>
-                <TooltipContent>Refresh</TooltipContent>
+                <TooltipContent>{{ t('common.refresh') }}</TooltipContent>
             </Tooltip>
 
             <!-- Window controls (Windows/Linux only) -->
@@ -200,7 +211,7 @@ async function close() {
                     </button>
                     <button
                         class="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
-                        title="Close"
+                        :title="t('common.close')"
                         @click="close"
                     >
                         <X class="size-4" :stroke-width="1.5" />

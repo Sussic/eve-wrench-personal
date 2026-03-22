@@ -15,9 +15,11 @@ import UpdateModal from '@/components/UpdateModal.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { useCopyManager } from '@/composables/useCopyManager'
 import { useUpdateChecker } from '@/composables/useUpdateChecker'
+import { useI18n } from '@/composables/useI18n'
 import { isBackup } from '@/types'
 
 const colorMode = useColorMode()
+const { t } = useI18n()
 const { updateAvailable, updateInfo, dismissed, dismiss } = useUpdateChecker()
 
 const {
@@ -57,11 +59,7 @@ const {
 } = useCopyManager()
 
 function isBackupSource(backup: { id: string }): boolean {
-    return !!(
-        source.value &&
-        isBackup(source.value) &&
-        source.value.id === backup.id
-    )
+    return !!(source.value && isBackup(source.value) && source.value.id === backup.id)
 }
 
 function toggleDarkMode() {
@@ -119,7 +117,7 @@ onMounted(init)
                             class="size-8 animate-spin rounded-full border-2 border-muted border-t-primary"
                         />
                         <p class="text-sm text-muted-foreground">
-                            Scanning EVE installations...
+                            {{ t('common.loading') }}
                         </p>
                     </div>
                 </div>
@@ -131,11 +129,10 @@ onMounted(init)
                         >
                             <Rocket class="size-12 text-muted-foreground" />
                             <h3 class="font-semibold">
-                                No EVE Installations Found
+                                {{ t('empty.noEveInstallations') }}
                             </h3>
                             <p class="text-sm text-muted-foreground">
-                                Make sure EVE Online is installed and has been
-                                launched at least once.
+                                {{ t('empty.noEveInstallationsDesc') }}
                             </p>
                             <Button
                                 variant="outline"
@@ -144,7 +141,7 @@ onMounted(init)
                                 @click="selectCustomEvePath"
                             >
                                 <FolderOpen class="mr-2 size-4" />
-                                Set custom folder path
+                                {{ t('settings.setCustomPath') }}
                             </Button>
                         </div>
                     </div>

@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { User, Rocket, ArrowDown, X, Copy } from 'lucide-vue-next'
 import type { SourceItem, SettingsEntry } from '@/types'
 import { isBackup, getServerShortName, getServerColor } from '@/types'
+import { useI18n } from '@/composables/useI18n'
 
 defineProps<{
     source: SourceItem | null
@@ -18,6 +19,8 @@ const emit = defineEmits<{
     clearTargets: []
     executeCopy: []
 }>()
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -27,7 +30,7 @@ const emit = defineEmits<{
         <div class="shrink-0">
             <div class="mb-1 flex items-center justify-between">
                 <span class="text-xs font-medium text-muted-foreground"
-                    >Source</span
+                    >{{ t('copyPanel.source') }}</span
                 >
                 <Button
                     v-if="source"
@@ -36,7 +39,7 @@ const emit = defineEmits<{
                     class="h-5 px-1.5 text-xs"
                     @click="emit('clearSource')"
                 >
-                    Clear
+                    {{ t('common.clear') }}
                 </Button>
             </div>
             <div
@@ -68,7 +71,7 @@ const emit = defineEmits<{
                     <span
                         v-if="isBackup(source)"
                         class="text-[10px] text-muted-foreground"
-                        >Backup</span
+                        >{{ t('titleBar.backups') }}</span
                     >
                 </div>
                 <Badge
@@ -87,7 +90,7 @@ const emit = defineEmits<{
                 v-else
                 class="rounded border border-dashed bg-background/50 p-3 text-center text-xs text-muted-foreground"
             >
-                No source selected
+                {{ t('copyPanel.noSourceSelected') }}
             </div>
         </div>
 
@@ -98,7 +101,7 @@ const emit = defineEmits<{
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div class="mb-1 flex shrink-0 items-center justify-between">
                 <span class="text-xs font-medium text-muted-foreground">
-                    Targets
+                    {{ t('copyPanel.targets') }}
                     <span v-if="targets.length" class="ml-1 text-foreground"
                         >({{ targets.length }})</span
                     >
@@ -110,7 +113,7 @@ const emit = defineEmits<{
                     class="h-5 px-1.5 text-xs"
                     @click="emit('clearTargets')"
                 >
-                    Clear
+                    {{ t('common.clear') }}
                 </Button>
             </div>
             <div class="flex-1 overflow-y-auto rounded border bg-background">
@@ -169,7 +172,7 @@ const emit = defineEmits<{
                     v-else
                     class="flex h-full min-h-20 items-center justify-center p-3 text-center text-xs text-muted-foreground"
                 >
-                    No targets selected
+                    {{ t('copyPanel.noTargetsSelected') }}
                 </div>
             </div>
         </div>
@@ -180,7 +183,7 @@ const emit = defineEmits<{
             @click="emit('executeCopy')"
         >
             <Copy class="size-4" />
-            {{ copying ? 'Copying...' : 'Copy Settings' }}
+            {{ copying ? t('copyPanel.copying') : t('copyPanel.copySettings') }}
         </Button>
     </aside>
 </template>

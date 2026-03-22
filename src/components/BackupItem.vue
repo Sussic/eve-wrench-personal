@@ -19,6 +19,9 @@ import {
     ArrowDownToLine,
 } from 'lucide-vue-next'
 import type { BackupEntry, SettingsEntry } from '@/types'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 defineProps<{
     backup: BackupEntry
@@ -68,12 +71,12 @@ const emit = defineEmits<{
                         @select="emit('setSource', backup)"
                     >
                         <ArrowUpFromLine class="mr-2 size-4" />
-                        Use as source
+                        {{ t('actions.useAsSource') }}
                     </DropdownMenuItem>
                     <DropdownMenuSub v-if="targets.length">
                         <DropdownMenuSubTrigger>
                             <ArrowDownToLine class="mr-2 size-4" />
-                            Apply to...
+                            {{ t('actions.applyTo') }}
                         </DropdownMenuSubTrigger>
                         <DropdownMenuSubContent
                             class="max-h-64 overflow-y-auto"
@@ -92,7 +95,7 @@ const emit = defineEmits<{
                         @select="emit('delete', backup)"
                     >
                         <Trash2 class="mr-2 size-4" />
-                        Delete
+                        {{ t('actions.delete') }}
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>

@@ -17,6 +17,9 @@ import type {
     SettingsKind,
     BackupEntry,
 } from '@/types'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
     profile: ProfileData
@@ -117,7 +120,7 @@ const sortedCharacters = computed(() =>
     <div class="space-y-6 text-sm">
         <div v-if="profile.accounts.length">
             <div class="mb-3 flex items-center gap-2">
-                <span class="text-lg font-semibold">Accounts</span>
+                <span class="text-lg font-semibold">{{ t('list.accounts') }}</span>
                 <span v-if="showProfileName" class="text-muted-foreground"
                     >· {{ profile.name }}</span
                 >
@@ -137,7 +140,7 @@ const sortedCharacters = computed(() =>
                                 @click="toggleAccountSort('name')"
                             >
                                 <div class="flex items-center gap-1">
-                                    Name
+                                    {{ t('table.name') }}
                                     <ChevronUp
                                         v-if="
                                             accountSortCol === 'name' &&
@@ -159,7 +162,7 @@ const sortedCharacters = computed(() =>
                                 @click="toggleAccountSort('modified')"
                             >
                                 <div class="flex items-center gap-1">
-                                    Modified
+                                    {{ t('table.modified') }}
                                     <ChevronUp
                                         v-if="
                                             accountSortCol === 'modified' &&
@@ -190,7 +193,7 @@ const sortedCharacters = computed(() =>
                                         )
                                     "
                                 >
-                                    Add all
+                                    {{ t('table.addAll') }}
                                 </Button>
                             </TableHead>
                         </TableRow>
@@ -220,7 +223,7 @@ const sortedCharacters = computed(() =>
 
         <div v-if="profile.characters.length">
             <div class="mb-3 mt-8 flex items-center gap-2">
-                <span class="text-lg font-semibold">Characters</span>
+                <span class="text-lg font-semibold">{{ t('list.characters') }}</span>
                 <span v-if="showProfileName" class="text-muted-foreground"
                     >· {{ profile.name }}</span
                 >
@@ -240,7 +243,7 @@ const sortedCharacters = computed(() =>
                                 @click="toggleCharSort('name')"
                             >
                                 <div class="flex items-center gap-1">
-                                    Name
+                                    {{ t('table.name') }}
                                     <ChevronUp
                                         v-if="
                                             charSortCol === 'name' &&
@@ -262,7 +265,7 @@ const sortedCharacters = computed(() =>
                                 @click="toggleCharSort('modified')"
                             >
                                 <div class="flex items-center gap-1">
-                                    Modified
+                                    {{ t('table.modified') }}
                                     <ChevronUp
                                         v-if="
                                             charSortCol === 'modified' &&
@@ -293,7 +296,7 @@ const sortedCharacters = computed(() =>
                                         )
                                     "
                                 >
-                                    Add all
+                                    {{ t('table.addAll') }}
                                 </Button>
                             </TableHead>
                         </TableRow>

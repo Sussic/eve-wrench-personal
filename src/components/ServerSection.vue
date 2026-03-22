@@ -8,6 +8,9 @@ import type {
     SettingsKind,
     BackupEntry,
 } from '@/types'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
     server: ServerData
@@ -49,18 +52,16 @@ const emit = defineEmits<{
         <!-- Extra Settings -->
         <div class="mt-8">
             <div class="mb-3">
-                <span class="text-lg font-semibold">Extra</span>
+                <span class="text-lg font-semibold">{{ t('extra.title') }}</span>
             </div>
             <div class="rounded-md border p-4">
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex flex-col gap-1">
                         <span class="text-sm font-medium"
-                            >Always Show Bracket Text</span
+                            >{{ t('extra.alwaysShowBracketText') }}</span
                         >
                         <span class="text-xs text-muted-foreground">
-                            Show ship labels on all brackets in space, not just
-                            selected targets. May impact performance with 200+
-                            pilots on grid. Requires client restart.
+                            {{ t('extra.alwaysShowBracketTextDesc') }}
                         </span>
                     </div>
                     <Switch

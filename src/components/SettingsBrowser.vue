@@ -19,6 +19,7 @@ import type {
     BackupEntry,
 } from '@/types'
 import { getServerColor } from '@/types'
+import { useI18n } from '@/composables/useI18n'
 
 const props = defineProps<{
     appData: AppData
@@ -41,6 +42,7 @@ const emit = defineEmits<{
     setBracketsAlwaysShow: [serverPath: string, enabled: boolean]
 }>()
 
+const { t } = useI18n()
 const activeTab = ref(props.appData.servers[0]?.info.id || '')
 
 watch(
@@ -87,8 +89,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
     const entries: SettingsEntry[] = []
     for (const server of props.appData.servers) {
         for (const profile of server.profiles) {
-            const items =
-                backup.kind === 'char' ? profile.characters : profile.accounts
+            const items = backup.kind === 'char' ? profile.characters : profile.accounts
             entries.push(...items)
         }
     }
@@ -123,7 +124,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                         class="gap-1.5 data-[state=active]:bg-muted"
                     >
                         <Archive class="size-3" />
-                        <span>Backups</span>
+                        <span>{{ t('titleBar.backups') }}</span>
                         <span class="text-xs text-muted-foreground"
                             >({{ appData.backups.length }})</span
                         >
@@ -163,7 +164,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
 
                 <TabsContent value="backups" class="mt-0">
                     <div class="mb-3 flex items-center gap-2">
-                        <span class="text-lg font-semibold">Backups</span>
+                        <span class="text-lg font-semibold">{{ t('titleBar.backups') }}</span>
                         <span
                             class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
                         >
@@ -180,7 +181,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                         @click="toggleBackupSort('name')"
                                     >
                                         <div class="flex items-center gap-1">
-                                            Name
+                                            {{ t('backup.name') }}
                                             <ChevronUp
                                                 v-if="
                                                     backupSortCol === 'name' &&
@@ -202,7 +203,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                         @click="toggleBackupSort('time')"
                                     >
                                         <div class="flex items-center gap-1">
-                                            Time
+                                            {{ t('backup.date') }}
                                             <ChevronUp
                                                 v-if="
                                                     backupSortCol === 'time' &&

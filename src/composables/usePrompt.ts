@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { useI18n } from './useI18n'
 
 interface PromptOptions {
     title?: string
@@ -15,14 +16,16 @@ const inputValue = ref('')
 let resolvePromise: ((value: string | null) => void) | null = null
 
 export function usePrompt() {
+    const { t } = useI18n()
+
     function prompt(opts: PromptOptions): Promise<string | null> {
         options.value = {
-            title: opts.title || 'Input',
+            title: opts.title || t('dialog.input'),
             description: opts.description,
             placeholder: opts.placeholder,
             defaultValue: opts.defaultValue || '',
-            confirmText: opts.confirmText || 'OK',
-            cancelText: opts.cancelText || 'Cancel',
+            confirmText: opts.confirmText || t('dialog.ok'),
+            cancelText: opts.cancelText || t('dialog.cancel'),
         }
         inputValue.value = opts.defaultValue || ''
         isOpen.value = true

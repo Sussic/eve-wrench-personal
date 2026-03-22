@@ -31,6 +31,9 @@ import {
     RotateCcw,
 } from 'lucide-vue-next'
 import type { SettingsEntry, SettingsKind, BackupEntry } from '@/types'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
     entry: SettingsEntry
@@ -172,7 +175,7 @@ function startEdit() {
                             <ArrowUpFromLine class="size-4" />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">Source</TooltipContent>
+                    <TooltipContent side="bottom">{{ t('actions.source') }}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                     <TooltipTrigger as-child>
@@ -186,7 +189,7 @@ function startEdit() {
                             <ArrowDownToLine class="size-4" />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">Target</TooltipContent>
+                    <TooltipContent side="bottom">{{ t('actions.target') }}</TooltipContent>
                 </Tooltip>
                 <DropdownMenu>
                     <DropdownMenuTrigger as-child>
@@ -197,12 +200,12 @@ function startEdit() {
                     <DropdownMenuContent align="end">
                         <DropdownMenuItem @select="emit('backup', entry)">
                             <Save class="mr-2 size-4" />
-                            Create backup
+                            {{ t('actions.createBackup') }}
                         </DropdownMenuItem>
                         <DropdownMenuSub v-if="backups.length">
                             <DropdownMenuSubTrigger>
                                 <RotateCcw class="mr-2 size-4" />
-                                Restore from backup
+                                {{ t('actions.restoreFromBackup') }}
                             </DropdownMenuSubTrigger>
                             <DropdownMenuSubContent>
                                 <DropdownMenuItem
@@ -220,7 +223,7 @@ function startEdit() {
                         </DropdownMenuSub>
                         <DropdownMenuItem v-else disabled>
                             <RotateCcw class="mr-2 size-4" />
-                            No backups available
+                            {{ t('actions.noBackupsAvailable') }}
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>

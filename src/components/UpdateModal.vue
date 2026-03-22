@@ -3,6 +3,9 @@ import { Download, X, ExternalLink } from 'lucide-vue-next'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Button } from '@/components/ui/button'
 import type { UpdateInfo } from '@/composables/useUpdateChecker'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
     info: UpdateInfo
@@ -33,7 +36,7 @@ function openRelease() {
                         <Download class="size-5 text-primary" />
                     </div>
                     <div>
-                        <h2 class="font-semibold">Update Available</h2>
+                        <h2 class="font-semibold">{{ t('update.updateAvailable') }}</h2>
                         <p class="text-xs text-muted-foreground">
                             v{{ info.current_version }} → v{{
                                 info.latest_version
@@ -53,8 +56,7 @@ function openRelease() {
 
             <div class="p-4">
                 <p class="mb-4 text-sm text-muted-foreground">
-                    A new version of EVE Wrench is available. Update to get the
-                    latest features and bug fixes.
+                    {{ t('update.newVersionAvailable') }}
                 </p>
 
                 <div
@@ -76,11 +78,11 @@ function openRelease() {
                     class="flex-1"
                     @click="emit('dismiss')"
                 >
-                    Later
+                    {{ t('update.later') }}
                 </Button>
                 <Button class="flex-1 gap-2" @click="openRelease">
                     <Download class="size-4" />
-                    Download
+                    {{ t('update.download') }}
                     <ExternalLink class="size-3 opacity-70" />
                 </Button>
             </div>

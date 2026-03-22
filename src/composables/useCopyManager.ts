@@ -18,6 +18,7 @@ import type {
 import { isBackup } from '@/types'
 import { useConfirm } from './useConfirm'
 import { usePrompt } from './usePrompt'
+import { useI18n } from './useI18n'
 
 const appData = ref<AppData | null>(null)
 const loading = ref(true)
@@ -41,6 +42,7 @@ async function setupListener(loadDataFn: () => Promise<void>) {
 export function useCopyManager() {
     const { confirm } = useConfirm()
     const { prompt } = usePrompt()
+    const { t } = useI18n()
 
     const sourceKind = computed<SettingsKind | null>(() => {
         if (!source.value) return null
@@ -71,13 +73,13 @@ export function useCopyManager() {
                 const serverCount = appData.value?.servers.length || 0
                 const backupCount = appData.value?.backups.length || 0
                 if (serverCount > 0 || backupCount > 0) {
-                    toast.success('Data refreshed', {
-                        description: `Found ${serverCount} server(s) and ${backupCount} backup(s)`,
+                    toast.success(t('toast.dataRefreshed'), {
+                        description: t('toast.dataRefreshedDesc', { servers: serverCount, backups: backupCount }),
                     })
                 }
             }
         } catch (e: unknown) {
-            toast.error('Failed to load data', { description: String(e) })
+            toast.error(t('toast.loadDataFailed'), { description: String(e) })
         } finally {
             loading.value = false
         }
@@ -97,7 +99,7 @@ export function useCopyManager() {
         const selected = await open({
             directory: true,
             multiple: false,
-            title: 'Select EVE Settings Folder',
+            title: t('dialog.selectEveFolder'),
         })
         if (!selected) return
 
@@ -105,12 +107,12 @@ export function useCopyManager() {
             const store = await load('settings.json')
             await store.set('customEvePath', selected)
             customEvePath.value = selected
-            toast.success('Custom path set', {
+            toast.success(t('toast.customPathSet'), {
                 description: selected,
             })
             await loadData()
         } catch (e: unknown) {
-            toast.error('Failed to set path', { description: String(e) })
+            toast.error(t('toast.setPathFailed'), { description: String(e) })
         }
     }
 
@@ -119,12 +121,12 @@ export function useCopyManager() {
             const store = await load('settings.json')
             await store.delete('customEvePath')
             customEvePath.value = null
-            toast.success('Path reset', {
-                description: 'Using default EVE settings location',
+            toast.success(t('toast.pathReset'), {
+                description: t('toast.pathResetDesc'),
             })
             await loadData()
         } catch (e: unknown) {
-            toast.error('Failed to reset path', { description: String(e) })
+            toast.error(t('toast.resetPathFailed'), { description: String(e) })
         }
     }
 
@@ -149,20 +151,20 @@ export function useCopyManager() {
 
     function addTarget(entry: SettingsEntry) {
         if (!source.value) {
-            toast.error('No source selected', {
-                description: 'Select a source first before adding targets',
+            toast.error(t('toast.noSourceSelected'), {
+                description: t('toast.noSourceSelectedDesc'),
             })
             return
         }
         if (entry.kind !== sourceKind.value) {
-            toast.error('Type mismatch', {
-                description: 'Target must be the same type as source',
+            toast.error(t('toast.typeMismatch'), {
+                description: t('toast.typeMismatchDesc'),
             })
             return
         }
         if (!isBackup(source.value) && source.value.path === entry.path) {
-            toast.error('Invalid target', {
-                description: 'Cannot use the same file as source and target',
+            toast.error(t('toast.invalidTarget'), {
+                description: t('toast.invalidTargetDesc'),
             })
             return
         }
@@ -182,8 +184,8 @@ export function useCopyManager() {
 
     function addAllFromProfile(profile: ProfileData, kind: SettingsKind) {
         if (!source.value) {
-            toast.error('No source selected', {
-                description: 'Select a source first before adding targets',
+            toast.error(t('toast.noSourceSelected'), {
+                description: t('toast.noSourceSelectedDesc'),
             })
             return
         }
@@ -202,9 +204,9 @@ export function useCopyManager() {
         if (!source.value || targets.value.length === 0) return
 
         const confirmed = await confirm({
-            title: 'Copy Settings',
-            description: `Copy settings from "${source.value.display_name}" to ${targets.value.length} target(s)?`,
-            confirmText: 'Copy',
+            title: t('dialog.copySettings'),
+            description: t('dialog.copySettingsDesc', { source: source.value.display_name, count: targets.value.length }),
+            confirmText: t('dialog.copy'),
         })
         if (!confirmed) return
 
@@ -216,12 +218,12 @@ export function useCopyManager() {
                 sourcePath,
                 targetPaths,
             })
-            toast.success('Settings copied', {
-                description: `Successfully copied to ${count} target(s)`,
+            toast.success(t('toast.settingsCopied'), {
+                description: t('toast.settingsCopiedDesc', { count }),
             })
             targets.value = []
         } catch (e: unknown) {
-            toast.error('Copy failed', { description: String(e) })
+            toast.error(t('toast.copyFailed'), { description: String(e) })
         } finally {
             copying.value = false
         }
@@ -229,11 +231,11 @@ export function useCopyManager() {
 
     async function createBackup(entry: SettingsEntry) {
         const name = await prompt({
-            title: 'Create Backup',
-            description: `Enter a name for this backup of ${entry.display_name}`,
-            placeholder: 'Backup name',
+            title: t('dialog.createBackup'),
+            description: t('dialog.createBackupDesc', { name: entry.display_name }),
+            placeholder: t('dialog.backupName'),
             defaultValue: entry.display_name,
-            confirmText: 'Create',
+            confirmText: t('dialog.create'),
         })
         if (!name) return
 
@@ -242,27 +244,27 @@ export function useCopyManager() {
                 sourcePath: entry.path,
                 backupName: name,
             })
-            toast.success('Backup created', {
-                description: `"${name}" has been saved`,
+            toast.success(t('toast.backupCreated'), {
+                description: t('toast.backupCreatedDesc', { name }),
             })
         } catch (e: unknown) {
-            toast.error('Backup failed', { description: String(e) })
+            toast.error(t('toast.backupFailed'), { description: String(e) })
         }
     }
 
     async function deleteBackup(backup: BackupEntry) {
         const confirmed = await confirm({
-            title: 'Delete Backup',
-            description: `Are you sure you want to delete "${backup.name}"?`,
-            confirmText: 'Delete',
+            title: t('dialog.deleteBackup'),
+            description: t('dialog.deleteBackupDesc', { name: backup.name }),
+            confirmText: t('dialog.delete'),
             destructive: true,
         })
         if (!confirmed) return
 
         try {
             await invoke('delete_backup', { backupPath: backup.path })
-            toast.success('Backup deleted', {
-                description: `"${backup.name}" has been removed`,
+            toast.success(t('toast.backupDeleted'), {
+                description: t('toast.backupDeletedDesc', { name: backup.name }),
             })
             if (
                 source.value &&
@@ -272,7 +274,7 @@ export function useCopyManager() {
                 source.value = null
             }
         } catch (e: unknown) {
-            toast.error('Delete failed', { description: String(e) })
+            toast.error(t('toast.deleteFailed'), { description: String(e) })
         }
     }
 
@@ -285,9 +287,9 @@ export function useCopyManager() {
 
     async function restoreBackup(entry: SettingsEntry, backup: BackupEntry) {
         const confirmed = await confirm({
-            title: 'Restore Backup',
-            description: `Restore "${backup.name}" to ${entry.display_name}? This will overwrite current settings.`,
-            confirmText: 'Restore',
+            title: t('dialog.restoreBackup'),
+            description: t('dialog.restoreBackupDesc', { backup: backup.name, target: entry.display_name }),
+            confirmText: t('dialog.restore'),
             destructive: true,
         })
         if (!confirmed) return
@@ -297,19 +299,19 @@ export function useCopyManager() {
                 sourcePath: backup.path,
                 targetPaths: [entry.path],
             })
-            toast.success('Backup restored', {
-                description: `"${backup.name}" has been applied`,
+            toast.success(t('toast.backupRestored'), {
+                description: t('toast.backupRestoredDesc', { name: backup.name }),
             })
         } catch (e: unknown) {
-            toast.error('Restore failed', { description: String(e) })
+            toast.error(t('toast.restoreFailed'), { description: String(e) })
         }
     }
 
     async function applyBackup(backup: BackupEntry, target: SettingsEntry) {
         const confirmed = await confirm({
-            title: 'Apply Backup',
-            description: `Apply "${backup.name}" to ${target.display_name}? This will overwrite current settings.`,
-            confirmText: 'Apply',
+            title: t('dialog.applyBackup'),
+            description: t('dialog.applyBackupDesc', { backup: backup.name, target: target.display_name }),
+            confirmText: t('dialog.apply'),
             destructive: true,
         })
         if (!confirmed) return
@@ -319,11 +321,11 @@ export function useCopyManager() {
                 sourcePath: backup.path,
                 targetPaths: [target.path],
             })
-            toast.success('Backup applied', {
-                description: `"${backup.name}" has been applied to ${target.display_name}`,
+            toast.success(t('toast.backupApplied'), {
+                description: t('toast.backupAppliedDesc', { backup: backup.name, target: target.display_name }),
             })
         } catch (e: unknown) {
-            toast.error('Apply failed', { description: String(e) })
+            toast.error(t('toast.applyFailed'), { description: String(e) })
         }
     }
 
@@ -348,7 +350,7 @@ export function useCopyManager() {
 
     async function exportSettings() {
         const exportPath = await save({
-            title: 'Export EVE Settings',
+            title: t('dialog.exportSettings'),
             defaultPath: `eve-wrench-export-${Date.now()}.zip`,
             filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
         })
@@ -359,17 +361,17 @@ export function useCopyManager() {
                 customEvePath: customEvePath.value,
                 exportPath,
             })
-            toast.success('Settings exported', {
-                description: `Exported ${result.file_count} file(s) to ${result.path}`,
+            toast.success(t('toast.settingsExported'), {
+                description: t('toast.settingsExportedDesc', { count: result.file_count, path: result.path }),
             })
         } catch (e: unknown) {
-            toast.error('Export failed', { description: String(e) })
+            toast.error(t('toast.exportFailed'), { description: String(e) })
         }
     }
 
     async function importSettings() {
         const selected = await open({
-            title: 'Import EVE Settings',
+            title: t('dialog.importSettings'),
             multiple: false,
             filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
         })
@@ -384,7 +386,7 @@ export function useCopyManager() {
             importFilePath.value = selected
             showImportDialog.value = true
         } catch (e: unknown) {
-            toast.error('Import analysis failed', { description: String(e) })
+            toast.error(t('toast.importAnalysisFailed'), { description: String(e) })
         }
     }
 
@@ -399,11 +401,11 @@ export function useCopyManager() {
                 customEvePath: customEvePath.value,
                 overwritePaths,
             })
-            toast.success('Settings imported', {
-                description: `Imported ${result.imported_count} file(s), skipped ${result.skipped_count}, backed up ${result.backed_up_count}`,
+            toast.success(t('toast.settingsImported'), {
+                description: t('toast.settingsImportedDesc', { imported: result.imported_count, skipped: result.skipped_count, backedUp: result.backed_up_count }),
             })
         } catch (e: unknown) {
-            toast.error('Import failed', { description: String(e) })
+            toast.error(t('toast.importFailed'), { description: String(e) })
         } finally {
             importAnalysis.value = null
             importFilePath.value = null
@@ -419,11 +421,11 @@ export function useCopyManager() {
     async function setBracketsAlwaysShow(serverPath: string, enabled: boolean) {
         try {
             await invoke('set_brackets_always_show', { serverPath, enabled })
-            toast.success('Setting updated', {
-                description: `Brackets always show ${enabled ? 'enabled' : 'disabled'}`,
+            toast.success(t('toast.settingUpdated'), {
+                description: t('toast.settingUpdatedDesc', { status: enabled ? t('common.enabled') : t('common.disabled') }),
             })
         } catch (e: unknown) {
-            toast.error('Failed to update setting', { description: String(e) })
+            toast.error(t('toast.updateSettingFailed'), { description: String(e) })
         }
     }
 
