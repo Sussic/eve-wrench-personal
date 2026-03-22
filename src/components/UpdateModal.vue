@@ -36,7 +36,9 @@ function openRelease() {
                         <Download class="size-5 text-primary" />
                     </div>
                     <div>
-                        <h2 class="font-semibold">{{ t('update.updateAvailable') }}</h2>
+                        <h2 class="font-semibold">
+                            {{ t('update.updateAvailable') }}
+                        </h2>
                         <p class="text-xs text-muted-foreground">
                             v{{ info.current_version }} → v{{
                                 info.latest_version

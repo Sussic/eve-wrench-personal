@@ -74,7 +74,10 @@ export function useCopyManager() {
                 const backupCount = appData.value?.backups.length || 0
                 if (serverCount > 0 || backupCount > 0) {
                     toast.success(t('toast.dataRefreshed'), {
-                        description: t('toast.dataRefreshedDesc', { servers: serverCount, backups: backupCount }),
+                        description: t('toast.dataRefreshedDesc', {
+                            servers: serverCount,
+                            backups: backupCount,
+                        }),
                     })
                 }
             }
@@ -205,7 +208,10 @@ export function useCopyManager() {
 
         const confirmed = await confirm({
             title: t('dialog.copySettings'),
-            description: t('dialog.copySettingsDesc', { source: source.value.display_name, count: targets.value.length }),
+            description: t('dialog.copySettingsDesc', {
+                source: source.value.display_name,
+                count: targets.value.length,
+            }),
             confirmText: t('dialog.copy'),
         })
         if (!confirmed) return
@@ -232,7 +238,9 @@ export function useCopyManager() {
     async function createBackup(entry: SettingsEntry) {
         const name = await prompt({
             title: t('dialog.createBackup'),
-            description: t('dialog.createBackupDesc', { name: entry.display_name }),
+            description: t('dialog.createBackupDesc', {
+                name: entry.display_name,
+            }),
             placeholder: t('dialog.backupName'),
             defaultValue: entry.display_name,
             confirmText: t('dialog.create'),
@@ -264,7 +272,9 @@ export function useCopyManager() {
         try {
             await invoke('delete_backup', { backupPath: backup.path })
             toast.success(t('toast.backupDeleted'), {
-                description: t('toast.backupDeletedDesc', { name: backup.name }),
+                description: t('toast.backupDeletedDesc', {
+                    name: backup.name,
+                }),
             })
             if (
                 source.value &&
@@ -288,7 +298,10 @@ export function useCopyManager() {
     async function restoreBackup(entry: SettingsEntry, backup: BackupEntry) {
         const confirmed = await confirm({
             title: t('dialog.restoreBackup'),
-            description: t('dialog.restoreBackupDesc', { backup: backup.name, target: entry.display_name }),
+            description: t('dialog.restoreBackupDesc', {
+                backup: backup.name,
+                target: entry.display_name,
+            }),
             confirmText: t('dialog.restore'),
             destructive: true,
         })
@@ -300,7 +313,9 @@ export function useCopyManager() {
                 targetPaths: [entry.path],
             })
             toast.success(t('toast.backupRestored'), {
-                description: t('toast.backupRestoredDesc', { name: backup.name }),
+                description: t('toast.backupRestoredDesc', {
+                    name: backup.name,
+                }),
             })
         } catch (e: unknown) {
             toast.error(t('toast.restoreFailed'), { description: String(e) })
@@ -310,7 +325,10 @@ export function useCopyManager() {
     async function applyBackup(backup: BackupEntry, target: SettingsEntry) {
         const confirmed = await confirm({
             title: t('dialog.applyBackup'),
-            description: t('dialog.applyBackupDesc', { backup: backup.name, target: target.display_name }),
+            description: t('dialog.applyBackupDesc', {
+                backup: backup.name,
+                target: target.display_name,
+            }),
             confirmText: t('dialog.apply'),
             destructive: true,
         })
@@ -322,7 +340,10 @@ export function useCopyManager() {
                 targetPaths: [target.path],
             })
             toast.success(t('toast.backupApplied'), {
-                description: t('toast.backupAppliedDesc', { backup: backup.name, target: target.display_name }),
+                description: t('toast.backupAppliedDesc', {
+                    backup: backup.name,
+                    target: target.display_name,
+                }),
             })
         } catch (e: unknown) {
             toast.error(t('toast.applyFailed'), { description: String(e) })
@@ -362,7 +383,10 @@ export function useCopyManager() {
                 exportPath,
             })
             toast.success(t('toast.settingsExported'), {
-                description: t('toast.settingsExportedDesc', { count: result.file_count, path: result.path }),
+                description: t('toast.settingsExportedDesc', {
+                    count: result.file_count,
+                    path: result.path,
+                }),
             })
         } catch (e: unknown) {
             toast.error(t('toast.exportFailed'), { description: String(e) })
@@ -386,7 +410,9 @@ export function useCopyManager() {
             importFilePath.value = selected
             showImportDialog.value = true
         } catch (e: unknown) {
-            toast.error(t('toast.importAnalysisFailed'), { description: String(e) })
+            toast.error(t('toast.importAnalysisFailed'), {
+                description: String(e),
+            })
         }
     }
 
@@ -402,7 +428,11 @@ export function useCopyManager() {
                 overwritePaths,
             })
             toast.success(t('toast.settingsImported'), {
-                description: t('toast.settingsImportedDesc', { imported: result.imported_count, skipped: result.skipped_count, backedUp: result.backed_up_count }),
+                description: t('toast.settingsImportedDesc', {
+                    imported: result.imported_count,
+                    skipped: result.skipped_count,
+                    backedUp: result.backed_up_count,
+                }),
             })
         } catch (e: unknown) {
             toast.error(t('toast.importFailed'), { description: String(e) })
@@ -422,10 +452,16 @@ export function useCopyManager() {
         try {
             await invoke('set_brackets_always_show', { serverPath, enabled })
             toast.success(t('toast.settingUpdated'), {
-                description: t('toast.settingUpdatedDesc', { status: enabled ? t('common.enabled') : t('common.disabled') }),
+                description: t('toast.settingUpdatedDesc', {
+                    status: enabled
+                        ? t('common.enabled')
+                        : t('common.disabled'),
+                }),
             })
         } catch (e: unknown) {
-            toast.error(t('toast.updateSettingFailed'), { description: String(e) })
+            toast.error(t('toast.updateSettingFailed'), {
+                description: String(e),
+            })
         }
     }
 

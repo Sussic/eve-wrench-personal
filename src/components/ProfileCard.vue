@@ -120,7 +120,9 @@ const sortedCharacters = computed(() =>
     <div class="space-y-6 text-sm">
         <div v-if="profile.accounts.length">
             <div class="mb-3 flex items-center gap-2">
-                <span class="text-lg font-semibold">{{ t('list.accounts') }}</span>
+                <span class="text-lg font-semibold">{{
+                    t('list.accounts')
+                }}</span>
                 <span v-if="showProfileName" class="text-muted-foreground"
                     >· {{ profile.name }}</span
                 >
@@ -223,7 +225,9 @@ const sortedCharacters = computed(() =>
 
         <div v-if="profile.characters.length">
             <div class="mb-3 mt-8 flex items-center gap-2">
-                <span class="text-lg font-semibold">{{ t('list.characters') }}</span>
+                <span class="text-lg font-semibold">{{
+                    t('list.characters')
+                }}</span>
                 <span v-if="showProfileName" class="text-muted-foreground"
                     >· {{ profile.name }}</span
                 >

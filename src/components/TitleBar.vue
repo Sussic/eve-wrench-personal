@@ -16,7 +16,7 @@ import {
     RotateCcw,
     Download,
     Upload,
-    Languages
+    Languages,
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import {
@@ -112,10 +112,16 @@ async function close() {
                     </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" class="w-64">
-                    <DropdownMenuLabel>{{ t('settings.eveSettingsFolder') }}</DropdownMenuLabel>
+                    <DropdownMenuLabel>{{
+                        t('settings.eveSettingsFolder')
+                    }}</DropdownMenuLabel>
                     <DropdownMenuItem @click="emit('selectEvePath')">
                         <FolderOpen class="mr-2 size-4" />
-                        {{ customEvePath ? t('settings.changeFolder') : t('settings.setCustomPath') }}
+                        {{
+                            customEvePath
+                                ? t('settings.changeFolder')
+                                : t('settings.setCustomPath')
+                        }}
                     </DropdownMenuItem>
                     <template v-if="customEvePath">
                         <DropdownMenuSeparator />
@@ -130,7 +136,10 @@ async function close() {
                         </DropdownMenuItem>
                     </template>
                     <DropdownMenuSeparator />
-                    <DropdownMenuLabel>{{ t('importExport.import') }} / {{ t('importExport.export') }}</DropdownMenuLabel>
+                    <DropdownMenuLabel
+                        >{{ t('importExport.import') }} /
+                        {{ t('importExport.export') }}</DropdownMenuLabel
+                    >
                     <DropdownMenuItem @click="emit('exportSettings')">
                         <Download class="mr-2 size-4" />
                         {{ t('importExport.exportSettings') }}
@@ -140,16 +149,20 @@ async function close() {
                         {{ t('importExport.importSettings') }}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuLabel>{{ t('settings.language') }}</DropdownMenuLabel>
-                    <DropdownMenuItem 
-                        v-for="lang in languages" 
+                    <DropdownMenuLabel>{{
+                        t('settings.language')
+                    }}</DropdownMenuLabel>
+                    <DropdownMenuItem
+                        v-for="lang in languages"
                         :key="lang.code"
                         @click="changeLanguage(lang.code)"
                         :class="{ 'bg-muted': locale === lang.code }"
                     >
                         <Languages class="mr-2 size-4" />
                         {{ lang.name }}
-                        <span v-if="locale === lang.code" class="ml-auto">✓</span>
+                        <span v-if="locale === lang.code" class="ml-auto"
+                            >✓</span
+                        >
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>

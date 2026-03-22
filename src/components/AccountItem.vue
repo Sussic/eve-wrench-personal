@@ -148,7 +148,9 @@ function startEdit() {
                             <ArrowUpFromLine class="size-4" />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">{{ t('actions.source') }}</TooltipContent>
+                    <TooltipContent side="bottom">{{
+                        t('actions.source')
+                    }}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                     <TooltipTrigger as-child>
@@ -162,7 +164,9 @@ function startEdit() {
                             <ArrowDownToLine class="size-4" />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">{{ t('actions.target') }}</TooltipContent>
+                    <TooltipContent side="bottom">{{
+                        t('actions.target')
+                    }}</TooltipContent>
                 </Tooltip>
                 <DropdownMenu>
                     <DropdownMenuTrigger as-child>

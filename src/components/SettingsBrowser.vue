@@ -89,7 +89,8 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
     const entries: SettingsEntry[] = []
     for (const server of props.appData.servers) {
         for (const profile of server.profiles) {
-            const items = backup.kind === 'char' ? profile.characters : profile.accounts
+            const items =
+                backup.kind === 'char' ? profile.characters : profile.accounts
             entries.push(...items)
         }
     }
@@ -164,7 +165,9 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
 
                 <TabsContent value="backups" class="mt-0">
                     <div class="mb-3 flex items-center gap-2">
-                        <span class="text-lg font-semibold">{{ t('titleBar.backups') }}</span>
+                        <span class="text-lg font-semibold">{{
+                            t('titleBar.backups')
+                        }}</span>
                         <span
                             class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
                         >

@@ -29,9 +29,9 @@ const { t } = useI18n()
     >
         <div class="shrink-0">
             <div class="mb-1 flex items-center justify-between">
-                <span class="text-xs font-medium text-muted-foreground"
-                    >{{ t('copyPanel.source') }}</span
-                >
+                <span class="text-xs font-medium text-muted-foreground">{{
+                    t('copyPanel.source')
+                }}</span>
                 <Button
                     v-if="source"
                     variant="ghost"

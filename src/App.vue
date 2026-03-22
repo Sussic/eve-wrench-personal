@@ -59,7 +59,11 @@ const {
 } = useCopyManager()
 
 function isBackupSource(backup: { id: string }): boolean {
-    return !!(source.value && isBackup(source.value) && source.value.id === backup.id)
+    return !!(
+        source.value &&
+        isBackup(source.value) &&
+        source.value.id === backup.id
+    )
 }
 
 function toggleDarkMode() {

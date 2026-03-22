@@ -52,14 +52,16 @@ const emit = defineEmits<{
         <!-- Extra Settings -->
         <div class="mt-8">
             <div class="mb-3">
-                <span class="text-lg font-semibold">{{ t('extra.title') }}</span>
+                <span class="text-lg font-semibold">{{
+                    t('extra.title')
+                }}</span>
             </div>
             <div class="rounded-md border p-4">
                 <div class="flex items-center justify-between gap-4">
                     <div class="flex flex-col gap-1">
-                        <span class="text-sm font-medium"
-                            >{{ t('extra.alwaysShowBracketText') }}</span
-                        >
+                        <span class="text-sm font-medium">{{
+                            t('extra.alwaysShowBracketText')
+                        }}</span>
                         <span class="text-xs text-muted-foreground">
                             {{ t('extra.alwaysShowBracketTextDesc') }}
                         </span>
