@@ -1,6 +1,6 @@
 [package]
 name = "eve-wrench"
-version = "0.2.1"
+version = "0.3.0-preview.1"
 description = "EVE Online Settings Manager - Backup, restore, and sync settings"
 authors = ["Tim Kunze"]
 edition = "2021"
@@ -31,4 +31,5 @@ tauri-plugin-store = "2"
 filetime = "0.2.26"
 zip = "2"
 sha2 = "0.10"
+blue-marshal = "1.0.1"
 

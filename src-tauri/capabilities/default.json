@@ -2,7 +2,7 @@
     "$schema": "../gen/schemas/desktop-schema.json",
     "identifier": "default",
     "description": "Capability for the main window",
-    "windows": ["main"],
+    "windows": ["main", "formations-*"],
     "permissions": [
         "core:default",
         "core:window:default",
@@ -12,6 +12,7 @@
         "core:window:allow-close",
         "core:window:allow-is-maximized",
         "core:window:allow-set-decorations",
+        "core:window:allow-set-title",
         "opener:default",
         "os:default",
         "dialog:default",

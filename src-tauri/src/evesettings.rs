@@ -171,7 +171,7 @@ fn eve_settings_root(custom_path: Option<&str>) -> Option<PathBuf> {
     }
 }
 
-fn backup_directory_for_path(source_path: &PathBuf) -> Result<PathBuf, String> {
+fn backup_directory_for_path(source_path: &Path) -> Result<PathBuf, String> {
     let profile_dir = source_path
         .parent() // settings_profile dir (e.g., settings_Default)
         .ok_or("Could not determine profile directory")?;
@@ -179,6 +179,38 @@ fn backup_directory_for_path(source_path: &PathBuf) -> Result<PathBuf, String> {
     let path = profile_dir.join("backups");
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+// Splits a "core_{kind}_{id}.dat" filename into (kind, id).
+fn parse_core_filename(path: &Path) -> Result<(&str, &str), String> {
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid filename")?;
+    let stem = filename
+        .strip_prefix("core_")
+        .and_then(|s| s.strip_suffix(".dat"))
+        .ok_or("Invalid settings file")?;
+    stem.split_once('_')
+        .ok_or_else(|| "Invalid settings file format".to_string())
+}
+
+// Copies a settings file into its profile's backups folder using the shared
+// "{name}_{kind}_{id}_{timestamp}.bak" naming scheme, so every backup shows
+// up in the app's backup list. Returns the backup path and its timestamp.
+fn auto_backup(path: &Path, name: &str) -> Result<(PathBuf, u64), String> {
+    let (kind_str, id) = parse_core_filename(path)?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let backup_filename = format!("{}_{}_{}_{}.bak", name, kind_str, id, timestamp);
+
+    let backup_dir = backup_directory_for_path(path)?;
+    let dest = backup_dir.join(&backup_filename);
+    fs::copy(path, &dest).map_err(|e| e.to_string())?;
+    Ok((dest, timestamp))
 }
 
 fn aliases_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -348,9 +380,9 @@ fn parse_settings_file(
     })
 }
 
-fn scan_installations(
-    custom_eve_path: Option<&str>,
-) -> Result<(HashMap<Server, Vec<ProfileData>>, HashMap<Server, PathBuf>), String> {
+type ScanResult = (HashMap<Server, Vec<ProfileData>>, HashMap<Server, PathBuf>);
+
+fn scan_installations(custom_eve_path: Option<&str>) -> Result<ScanResult, String> {
     let root = eve_settings_root(custom_eve_path).ok_or("EVE settings directory not found")?;
 
     if !root.exists() {
@@ -542,7 +574,7 @@ fn scan_backups(custom_eve_path: Option<&str>) -> Result<Vec<BackupEntry>, Strin
         }
     }
 
-    backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     Ok(backups)
 }
 
@@ -648,6 +680,615 @@ pub async fn get_app_data(
     Ok(AppData { servers, backups })
 }
 
+// ── Probe formations ─────────────────────────────────────────────────────
+//
+// Stored in the account (core_user) file under ui -> probescanning.customFormations
+// as (timestamp, {id: (name, [((x, y, z), range), ...])}). Every leaf setting is
+// wrapped in a (FILETIME timestamp, value) tuple; positions and ranges are meters.
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FormationProbe {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub range: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProbeFormation {
+    pub id: i64,
+    pub name: String,
+    pub probes: Vec<FormationProbe>,
+}
+
+const UI_KEY: &str = "bytes:ui";
+const FORMATIONS_KEY: &str = "bytes:probescanning.customFormations";
+const SELECTED_FORMATION_KEY: &str = "bytes:probescanning.selectedFormationID";
+
+// Windows FILETIME: 100ns intervals since 1601-01-01, which is what EVE
+// stamps on every settings value.
+fn filetime_now() -> u64 {
+    let unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (unix_secs + 11_644_473_600) * 10_000_000
+}
+
+fn load_settings_json(path: &Path) -> Result<(serde_json::Value, bool), String> {
+    let bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let decoded = blue_marshal::decode(&bytes)
+        .map_err(|e| format!("Failed to decode settings file: {}", e))?;
+    Ok((blue_marshal::to_json(&decoded.value), decoded.had_crc))
+}
+
+// Strips blue-marshal's lossless type prefix ("utf8:lol" -> "lol").
+fn strip_type_prefix(s: &str) -> &str {
+    s.split_once(':').map(|(_, rest)| rest).unwrap_or(s)
+}
+
+fn parse_probe(value: &serde_json::Value) -> Option<FormationProbe> {
+    let outer = value.get("tuple")?.as_array()?;
+    let pos = outer.first()?.get("tuple")?.as_array()?;
+    Some(FormationProbe {
+        x: pos.first()?.as_f64()?,
+        y: pos.get(1)?.as_f64()?,
+        z: pos.get(2)?.as_f64()?,
+        range: outer.get(1)?.as_f64()?,
+    })
+}
+
+fn formations_from_settings(root: &serde_json::Value) -> Vec<ProbeFormation> {
+    let mut formations = Vec::new();
+
+    let entries = root
+        .get(UI_KEY)
+        .and_then(|ui| ui.get(FORMATIONS_KEY))
+        .and_then(|v| v.get("tuple"))
+        .and_then(|t| t.get(1))
+        .and_then(|v| v.as_object());
+
+    let Some(entries) = entries else {
+        return formations;
+    };
+
+    for (key, value) in entries {
+        let id = match strip_type_prefix(key).parse::<i64>() {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        // Negative IDs are client-internal scratch state (e.g. -4 "tempFormation"
+        // holding the currently launched probe positions) — not user formations
+        if id < 0 {
+            continue;
+        }
+        let Some(tuple) = value.get("tuple").and_then(|t| t.as_array()) else {
+            continue;
+        };
+        let Some(name) = tuple.first().and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let probes = tuple
+            .get(1)
+            .and_then(|v| v.as_array())
+            .map(|list| list.iter().filter_map(parse_probe).collect())
+            .unwrap_or_default();
+
+        formations.push(ProbeFormation {
+            id,
+            name: strip_type_prefix(name).to_string(),
+            probes,
+        });
+    }
+
+    formations.sort_by_key(|f| f.id);
+    formations
+}
+
+fn formations_into_settings(
+    root: &mut serde_json::Value,
+    formations: &[ProbeFormation],
+) -> Result<(), String> {
+    use serde_json::json;
+
+    let mut entries = serde_json::Map::new();
+
+    // Carry over client-internal entries (negative IDs) untouched
+    if let Some(existing) = root
+        .get(UI_KEY)
+        .and_then(|ui| ui.get(FORMATIONS_KEY))
+        .and_then(|v| v.get("tuple"))
+        .and_then(|t| t.get(1))
+        .and_then(|v| v.as_object())
+    {
+        for (key, value) in existing {
+            let id = strip_type_prefix(key).parse::<i64>().unwrap_or(0);
+            if id < 0 {
+                entries.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    for formation in formations {
+        let probes: Vec<serde_json::Value> = formation
+            .probes
+            .iter()
+            .map(|p| json!({"tuple": [{"tuple": [p.x, p.y, p.z]}, p.range]}))
+            .collect();
+        entries.insert(
+            format!("int:{}", formation.id),
+            json!({"tuple": [format!("utf8:{}", formation.name), probes]}),
+        );
+    }
+    let timestamp = format!("long:{}", filetime_now());
+
+    let root_map = root
+        .as_object_mut()
+        .ok_or("Settings file has an unexpected structure")?;
+    let ui = root_map
+        .entry(UI_KEY.to_string())
+        .or_insert_with(|| json!({}));
+    let ui_map = ui
+        .as_object_mut()
+        .ok_or("Settings 'ui' section has an unexpected structure")?;
+
+    ui_map.insert(
+        FORMATIONS_KEY.to_string(),
+        json!({"tuple": [timestamp, entries]}),
+    );
+
+    // Keep the selected-formation pointer valid after edits
+    if let Some(selected) = ui_map
+        .get_mut(SELECTED_FORMATION_KEY)
+        .and_then(|v| v.get_mut("tuple"))
+        .and_then(|t| t.as_array_mut())
+    {
+        let current = selected.get(1).and_then(|v| v.as_i64());
+        let still_valid = current.is_some_and(|id| formations.iter().any(|f| f.id == id));
+        if !still_valid {
+            if let Some(slot) = selected.get_mut(1) {
+                *slot = json!(formations.first().map(|f| f.id).unwrap_or(0));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn read_formations_from_file(path: &Path) -> Result<Vec<ProbeFormation>, String> {
+    let (json, _) = load_settings_json(path)?;
+    Ok(formations_from_settings(&json))
+}
+
+fn write_formations_to_file(path: &Path, formations: &[ProbeFormation]) -> Result<(), String> {
+    let (mut json, had_crc) = load_settings_json(path)?;
+    formations_into_settings(&mut json, formations)?;
+
+    let value = blue_marshal::from_json(&json)
+        .map_err(|e| format!("Failed to rebuild settings data: {}", e))?;
+    let options = blue_marshal::EncodeOptions {
+        checksum: had_crc,
+        ..Default::default()
+    };
+    let bytes = blue_marshal::encode(&value, &options)
+        .map_err(|e| format!("Failed to encode settings file: {}", e))?;
+
+    fs::write(path, bytes).map_err(|e| format!("Failed to write settings file: {}", e))?;
+    Ok(())
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
+#[tauri::command]
+pub async fn open_formation_editor(
+    app: tauri::AppHandle,
+    file_path: String,
+    entry_name: String,
+) -> Result<(), String> {
+    // One editor window per settings file; labels only allow [a-zA-Z0-9-/:_]
+    let mut hasher = Sha256::new();
+    hasher.update(file_path.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    let label = format!("formations-{}", &digest[..12]);
+
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let url = format!(
+        "index.html#/formations?path={}&name={}",
+        percent_encode(&file_path),
+        percent_encode(&entry_name)
+    );
+
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(format!("Probe Formations — {}", entry_name))
+        .inner_size(1150.0, 780.0)
+        .min_inner_size(900.0, 620.0)
+        .build()
+        .map_err(|e| format!("Failed to open editor window: {}", e))?;
+
+    Ok(())
+}
+
+// ── Selective settings copy ──────────────────────────────────────────────
+//
+// Copies curated groups of settings between files of the same kind instead
+// of overwriting the whole file. A group is either whole top-level sections
+// or a set of key prefixes inside the "ui" section.
+
+enum GroupRule {
+    Sections(&'static [&'static str]),
+    UiPrefixes(&'static [&'static str]),
+}
+
+// Mirrored in src/lib/copyGroups.ts (COPY_GROUPS): the frontend owns which
+// groups are offered per file kind and their defaults; this owns what each
+// group id actually matches. Keep the id sets in sync.
+fn group_rule(group: &str) -> Option<GroupRule> {
+    Some(match group {
+        // Account (core_user) groups
+        "overview" => GroupRule::Sections(&["overview", "defaultoverview"]),
+        "probes" => GroupRule::UiPrefixes(&["probescanning."]),
+        "suppress" => GroupRule::Sections(&["suppress"]),
+        "audio" => GroupRule::Sections(&["audio"]),
+        "camera_graphics" => GroupRule::UiPrefixes(&[
+            "camera",
+            "spaceMouse",
+            "offsetUIwithCamera",
+            "invertCameraZoom",
+            "advancedCamera",
+            "missilesEnabled",
+            "turretsEnabled",
+            "trailsEnabled",
+            "effectsEnabled",
+            "explosionEffectsEnabled",
+            "gpuParticlesEnabled",
+            "droneModelsEnabled",
+            "modelSkinsInSpaceEnabled",
+            "UI_ASTEROID_",
+        ]),
+        "market" => GroupRule::UiPrefixes(&[
+            "market_",
+            "minEdit_market",
+            "maxEdit_market",
+            "quickbar",
+            "contracts_search_",
+            "mycontracts_",
+            "pricehistorytype",
+        ]),
+        "slots" => GroupRule::UiPrefixes(&["slotOrder", "linkedWeapons_"]),
+        "tabgroups" => GroupRule::Sections(&["tabgroups"]),
+        // Typed-text autocomplete and recent-search data; offered for both
+        // file kinds — keys missing from a source are simply skipped
+        "search_history" => GroupRule::UiPrefixes(&[
+            "editHistory",
+            "contracts_history",
+            "market_searchText",
+            "assetsSearch",
+        ]),
+        // Character (core_char) groups
+        "windows" => GroupRule::Sections(&["windows"]),
+        "neocom" => GroupRule::UiPrefixes(&["neocomButtonRawData"]),
+        "chat" => GroupRule::UiPrefixes(&["chatchannels"]),
+        "infopanels" => GroupRule::UiPrefixes(&["InfoPanelModes_"]),
+        "dockpanels" => GroupRule::Sections(&["dockPanels"]),
+        _ => return None,
+    })
+}
+
+fn key_matches(key: &str, prefixes: &[&str]) -> bool {
+    let stripped = strip_type_prefix(key);
+    prefixes.iter().any(|p| stripped.starts_with(p))
+}
+
+fn find_section_key(root: &serde_json::Map<String, serde_json::Value>, section: &str) -> String {
+    // Sections are usually "bytes:<name>"; fall back to constructing it
+    root.keys()
+        .find(|k| strip_type_prefix(k) == section)
+        .cloned()
+        .unwrap_or_else(|| format!("bytes:{}", section))
+}
+
+// The copy starts as a full clone of the source; excluded groups are then
+// restored to exactly what the target had, so everything not explicitly
+// opted out — including keys no group covers — behaves like a normal copy.
+fn preserve_excluded_groups(
+    result: &mut serde_json::Value,
+    target: &serde_json::Value,
+    excluded_groups: &[String],
+) -> Result<(), String> {
+    let result_map = result
+        .as_object_mut()
+        .ok_or("Source file has an unexpected structure")?;
+    let target_map = target
+        .as_object()
+        .ok_or("Target file has an unexpected structure")?;
+
+    for group in excluded_groups {
+        let Some(rule) = group_rule(group) else {
+            continue;
+        };
+        match rule {
+            GroupRule::Sections(sections) => {
+                for section in sections {
+                    let key = find_section_key(result_map, section);
+                    result_map.remove(&key);
+                    let target_key = find_section_key(target_map, section);
+                    if let Some(value) = target_map.get(&target_key) {
+                        result_map.insert(target_key, value.clone());
+                    }
+                }
+            }
+            GroupRule::UiPrefixes(prefixes) => {
+                let ui_key = find_section_key(result_map, "ui");
+                let empty = serde_json::Map::new();
+                let target_ui = target_map
+                    .get(&find_section_key(target_map, "ui"))
+                    .and_then(|v| v.as_object())
+                    .unwrap_or(&empty);
+
+                let result_ui = result_map
+                    .entry(ui_key)
+                    .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+                let Some(result_ui) = result_ui.as_object_mut() else {
+                    continue;
+                };
+
+                result_ui.retain(|k, _| !key_matches(k, prefixes));
+                for (k, v) in target_ui {
+                    if key_matches(k, prefixes) {
+                        result_ui.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn copy_settings_selective(
+    app: tauri::AppHandle,
+    source_path: String,
+    target_paths: Vec<String>,
+    excluded_groups: Vec<String>,
+) -> Result<u32, String> {
+    use filetime::FileTime;
+
+    let (source_json, _) = load_settings_json(Path::new(&source_path))?;
+    let mut success_count = 0u32;
+    let now = FileTime::now();
+
+    for target_path in &target_paths {
+        if *target_path == source_path {
+            continue;
+        }
+        let path = Path::new(target_path);
+        let Ok((target_json, had_crc)) = load_settings_json(path) else {
+            continue;
+        };
+
+        let mut result = source_json.clone();
+        if preserve_excluded_groups(&mut result, &target_json, &excluded_groups).is_err() {
+            continue;
+        }
+
+        let Ok(value) = blue_marshal::from_json(&result) else {
+            continue;
+        };
+        let options = blue_marshal::EncodeOptions {
+            checksum: had_crc,
+            ..Default::default()
+        };
+        let Ok(bytes) = blue_marshal::encode(&value, &options) else {
+            continue;
+        };
+
+        // Back up the target before touching it
+        if auto_backup(path, "pre-selective-copy").is_err() {
+            continue;
+        }
+        if fs::write(path, bytes).is_ok() {
+            let _ = filetime::set_file_mtime(path, now);
+            success_count += 1;
+        }
+    }
+
+    if success_count > 0 {
+        emit_data_changed(&app);
+    }
+    Ok(success_count)
+}
+
+// Current display name (alias if set, otherwise the raw id) for a settings
+// file, so secondary windows can stay in sync when aliases change.
+#[tauri::command]
+pub fn get_entry_display_name(app: tauri::AppHandle, file_path: String) -> Result<String, String> {
+    let path = Path::new(&file_path);
+    let (_, id) = parse_core_filename(path)?;
+
+    let aliases = load_aliases(&app);
+    Ok(aliases.get(id).cloned().unwrap_or_else(|| id.to_string()))
+}
+
+#[tauri::command]
+pub fn read_probe_formations(file_path: String) -> Result<Vec<ProbeFormation>, String> {
+    read_formations_from_file(Path::new(&file_path))
+}
+
+#[tauri::command]
+pub fn write_probe_formations(
+    app: tauri::AppHandle,
+    file_path: String,
+    formations: Vec<ProbeFormation>,
+) -> Result<(), String> {
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err("Settings file does not exist".into());
+    }
+
+    auto_backup(path, "pre-formation-edit")?;
+    write_formations_to_file(path, &formations)?;
+
+    emit_data_changed(&app);
+    Ok(())
+}
+
+#[cfg(test)]
+mod formation_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_formations() -> Vec<ProbeFormation> {
+        vec![ProbeFormation {
+            id: 0,
+            name: "pinpoint".to_string(),
+            probes: vec![
+                FormationProbe {
+                    x: 250_000.0,
+                    y: 0.0,
+                    z: 0.0,
+                    range: 37_399_467_675.0,
+                },
+                FormationProbe {
+                    x: 0.0,
+                    y: -500_000.0,
+                    z: 0.0,
+                    range: 37_399_467_675.0,
+                },
+            ],
+        }]
+    }
+
+    #[test]
+    fn formations_round_trip_through_marshal() {
+        let dir = std::env::temp_dir().join("eve-wrench-formation-test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("core_user_12345.dat");
+
+        // Minimal settings file with an unrelated key that must survive and a
+        // client-internal temp formation that must be hidden but preserved
+        let initial = json!({
+            "bytes:ui": {
+                "bytes:missilesEnabled": {"tuple": ["long:134280801871504062", true]},
+                "bytes:probescanning.selectedFormationID": {"tuple": ["long:134280801860500867", 7]},
+                "bytes:probescanning.customFormations": {"tuple": ["long:134280801871504062", {
+                    "int:-4": {"tuple": ["bytes:tempFormation", []]},
+                }]},
+            }
+        });
+        let value = blue_marshal::from_json(&initial).unwrap();
+        let bytes = blue_marshal::encode(&value, &blue_marshal::EncodeOptions::default()).unwrap();
+        fs::write(&path, bytes).unwrap();
+
+        assert!(read_formations_from_file(&path).unwrap().is_empty());
+
+        let formations = sample_formations();
+        write_formations_to_file(&path, &formations).unwrap();
+
+        let read_back = read_formations_from_file(&path).unwrap();
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].name, "pinpoint");
+        assert_eq!(read_back[0].probes.len(), 2);
+        assert_eq!(read_back[0].probes[0].x, 250_000.0);
+        assert_eq!(read_back[0].probes[1].y, -500_000.0);
+
+        // Unrelated key untouched, selected id repaired to a valid one
+        let (json, _) = load_settings_json(&path).unwrap();
+        let ui = json.get("bytes:ui").unwrap();
+        assert_eq!(
+            ui.get("bytes:missilesEnabled")
+                .unwrap()
+                .get("tuple")
+                .unwrap()[1],
+            json!(true)
+        );
+        assert_eq!(
+            ui.get(SELECTED_FORMATION_KEY)
+                .unwrap()
+                .get("tuple")
+                .unwrap()[1],
+            json!(0)
+        );
+
+        // Client-internal temp formation preserved alongside user formations
+        let stored = ui.get(FORMATIONS_KEY).unwrap().get("tuple").unwrap()[1]
+            .as_object()
+            .unwrap();
+        assert!(stored.contains_key("int:-4"));
+        assert!(stored.contains_key("int:0"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn selective_copy_preserves_only_excluded_groups() {
+        let source = json!({
+            "bytes:overview": {
+                "bytes:shipLabels": {"tuple": ["long:1", "utf8:source-labels"]},
+            },
+            "bytes:ui": {
+                "bytes:probescanning.customFormations": {"tuple": ["long:1", {"int:0": {"tuple": ["utf8:src", []]}}]},
+                "bytes:slotOrder": {"tuple": ["long:1", "utf8:source-slots"]},
+                "bytes:someUnmappedKey": {"tuple": ["long:1", "utf8:source-unmapped"]},
+            },
+        });
+        let target = json!({
+            "bytes:overview": {
+                "bytes:shipLabels": {"tuple": ["long:2", "utf8:target-labels"]},
+            },
+            "bytes:ui": {
+                "bytes:probescanning.customFormations": {"tuple": ["long:2", {}]},
+                "bytes:slotOrder": {"tuple": ["long:2", "utf8:target-slots"]},
+                "bytes:linkedWeapons_groupsDict": {"tuple": ["long:2", "utf8:target-links"]},
+                "bytes:someUnmappedKey": {"tuple": ["long:2", "utf8:target-unmapped"]},
+            },
+        });
+
+        let mut result = source.clone();
+        preserve_excluded_groups(&mut result, &target, &["slots".to_string()]).unwrap();
+
+        let ui = result.get("bytes:ui").unwrap();
+        // Not excluded: mapped and unmapped keys alike come from source
+        assert_eq!(
+            result["bytes:overview"]["bytes:shipLabels"]["tuple"][1],
+            json!("utf8:source-labels")
+        );
+        assert!(ui["bytes:probescanning.customFormations"]["tuple"][1]
+            .as_object()
+            .unwrap()
+            .contains_key("int:0"));
+        assert_eq!(
+            ui["bytes:someUnmappedKey"]["tuple"][1],
+            json!("utf8:source-unmapped")
+        );
+        // Excluded: slot layout keeps exactly what the target had, including
+        // keys the source does not have at all
+        assert_eq!(
+            ui["bytes:slotOrder"]["tuple"][1],
+            json!("utf8:target-slots")
+        );
+        assert_eq!(
+            ui["bytes:linkedWeapons_groupsDict"]["tuple"][1],
+            json!("utf8:target-links")
+        );
+    }
+}
+
 #[tauri::command]
 pub fn create_backup(
     app: tauri::AppHandle,
@@ -660,37 +1301,15 @@ pub fn create_backup(
         return Err("Source file does not exist".into());
     }
 
-    let filename = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("Invalid filename")?;
-
-    if !filename.starts_with("core_") || !filename.ends_with(".dat") {
-        return Err("Invalid settings file".into());
-    }
-
-    let stem = filename
-        .trim_start_matches("core_")
-        .trim_end_matches(".dat");
-    let (kind_str, id) = stem.split_once('_').ok_or("Invalid settings file format")?;
-
+    let (kind_str, id) = parse_core_filename(&source)?;
     let kind = match kind_str {
         "user" => SettingsKind::User,
         "char" => SettingsKind::Char,
         _ => return Err("Unknown settings type".into()),
     };
+    let id = id.to_string();
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-
-    let backup_filename = format!("{}_{}_{}_{}.bak", backup_name, kind_str, id, timestamp);
-
-    let backup_dir = backup_directory_for_path(&source)?;
-    let dest = backup_dir.join(&backup_filename);
-
-    fs::copy(&source, &dest).map_err(|e| e.to_string())?;
+    let (dest, timestamp) = auto_backup(&source, &backup_name)?;
 
     let entry = BackupEntry {
         id: format!("{}_{}", backup_name, timestamp),
