@@ -28,7 +28,9 @@ import {
     X,
     Save,
     RotateCcw,
+    Radar,
 } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import type { SettingsEntry, SettingsKind, BackupEntry } from '@/types'
 import { useI18n } from '@/composables/useI18n'
 
@@ -75,6 +77,19 @@ function cancelEdit() {
 function startEdit() {
     aliasInput.value = props.entry.alias || ''
     editing.value = true
+}
+
+async function openFormationEditor() {
+    try {
+        await invoke('open_formation_editor', {
+            filePath: props.entry.path,
+            entryName: props.entry.display_name,
+        })
+    } catch (e) {
+        toast.error(t('formationEditor.loadFailed'), {
+            description: String(e),
+        })
+    }
 }
 </script>
 
@@ -175,6 +190,10 @@ function startEdit() {
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                        <DropdownMenuItem @select="openFormationEditor">
+                            <Radar class="mr-2 size-4" />
+                            {{ t('actions.editFormations') }}
+                        </DropdownMenuItem>
                         <DropdownMenuItem @select="emit('backup', entry)">
                             <Save class="mr-2 size-4" />
                             {{ t('actions.createBackup') }}

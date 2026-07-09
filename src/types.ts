@@ -92,6 +92,19 @@ export interface ImportResultInfo {
     backed_up_count: number
 }
 
+export interface FormationProbe {
+    x: number
+    y: number
+    z: number
+    range: number
+}
+
+export interface ProbeFormation {
+    id: number
+    name: string
+    probes: FormationProbe[]
+}
+
 export type SourceItem = SettingsEntry | BackupEntry
 
 export function isBackup(item: SourceItem): item is BackupEntry {

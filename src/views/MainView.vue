@@ -56,6 +56,7 @@ const {
     cancelImport,
     importAnalysis,
     showImportDialog,
+    copyGroupSelection,
 } = useCopyManager()
 
 function isBackupSource(backup: { id: string }): boolean {
@@ -175,10 +176,14 @@ onMounted(init)
                         :targets="targets"
                         :can-copy="canCopy"
                         :copying="copying"
+                        :group-selection="copyGroupSelection"
                         @clear-source="clearSource"
                         @remove-target="removeTarget"
                         @clear-targets="clearTargets"
                         @execute-copy="executeCopy"
+                        @set-group="
+                            (id, value) => (copyGroupSelection[id] = value)
+                        "
                     />
                 </template>
             </main>

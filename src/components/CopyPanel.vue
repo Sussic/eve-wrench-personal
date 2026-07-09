@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { User, Rocket, ArrowDown, X, Copy } from 'lucide-vue-next'
 import type { SourceItem, SettingsEntry } from '@/types'
 import { isBackup, getServerShortName, getServerColor } from '@/types'
+import { groupsForKind } from '@/lib/copyGroups'
 import { useI18n } from '@/composables/useI18n'
 
-defineProps<{
+const props = defineProps<{
     source: SourceItem | null
     targets: SettingsEntry[]
     canCopy: boolean
     copying: boolean
+    groupSelection: Record<string, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -18,9 +22,14 @@ const emit = defineEmits<{
     removeTarget: [entry: SettingsEntry]
     clearTargets: []
     executeCopy: []
+    setGroup: [id: string, value: boolean]
 }>()
 
 const { t } = useI18n()
+
+const visibleGroups = computed(() =>
+    props.source ? groupsForKind(props.source.kind) : []
+)
 </script>
 
 <template>
@@ -175,6 +184,32 @@ const { t } = useI18n()
                     {{ t('copyPanel.noTargetsSelected') }}
                 </div>
             </div>
+        </div>
+
+        <div v-if="source" class="shrink-0">
+            <span class="mb-1 block text-xs font-medium text-muted-foreground">
+                {{ t('copyPanel.copyOptions') }}
+            </span>
+            <div
+                class="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded border bg-background p-2"
+            >
+                <label
+                    v-for="group in visibleGroups"
+                    :key="group.id"
+                    class="flex cursor-pointer items-center gap-2 text-xs"
+                >
+                    <Checkbox
+                        :model-value="groupSelection[group.id]"
+                        @update:model-value="
+                            emit('setGroup', group.id, $event === true)
+                        "
+                    />
+                    <span>{{ t(`copyGroups.${group.id}`) }}</span>
+                </label>
+            </div>
+            <p class="mt-1 text-[10px] leading-snug text-muted-foreground">
+                {{ t('copyPanel.selectiveHint') }}
+            </p>
         </div>
 
         <Button

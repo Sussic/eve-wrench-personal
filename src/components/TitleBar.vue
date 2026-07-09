@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { platform } from '@tauri-apps/plugin-os'
 import {
@@ -53,10 +54,19 @@ const { t, locale, languages, changeLanguage } = useI18n()
 const appWindow = getCurrentWindow()
 const isMac = ref(true)
 const isMaximized = ref(false)
+const appInfo = ref<{ version: string; preview: boolean } | null>(null)
 
 onMounted(async () => {
     isMac.value = platform() === 'macos'
     isMaximized.value = await appWindow.isMaximized()
+
+    try {
+        appInfo.value = await invoke<{ version: string; preview: boolean }>(
+            'get_app_info'
+        )
+    } catch {
+        appInfo.value = null
+    }
 
     if (!isMac.value) {
         await appWindow.setDecorations(false)
@@ -95,6 +105,13 @@ async function close() {
                 class="text-xs font-semibold tracking-widest text-muted-foreground"
             >
                 EVE WRENCH
+            </span>
+            <span
+                v-if="appInfo?.preview"
+                class="rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"
+                :title="`v${appInfo.version}`"
+            >
+                {{ t('titleBar.preview') }}
             </span>
         </div>
 

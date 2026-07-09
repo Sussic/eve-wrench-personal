@@ -16,6 +16,7 @@ import type {
     ImportResultInfo,
 } from '@/types'
 import { isBackup } from '@/types'
+import { defaultGroupSelection, groupsForKind } from '@/lib/copyGroups'
 import { useConfirm } from './useConfirm'
 import { usePrompt } from './usePrompt'
 import { useI18n } from './useI18n'
@@ -29,6 +30,7 @@ const customEvePath = ref<string | null>(null)
 const importAnalysis = ref<ImportAnalysis | null>(null)
 const importFilePath = ref<string | null>(null)
 const showImportDialog = ref(false)
+const copyGroupSelection = ref<Record<string, boolean>>(defaultGroupSelection())
 let listenerSetup = false
 
 async function setupListener(loadDataFn: () => Promise<void>) {
@@ -47,6 +49,15 @@ export function useCopyManager() {
     const sourceKind = computed<SettingsKind | null>(() => {
         if (!source.value) return null
         return source.value.kind
+    })
+
+    // Unchecked groups are excluded: the target keeps its own version of
+    // them, while everything else in the file copies over.
+    const excludedCopyGroups = computed<string[]>(() => {
+        if (!sourceKind.value) return []
+        return groupsForKind(sourceKind.value)
+            .filter((g) => !copyGroupSelection.value[g.id])
+            .map((g) => g.id)
     })
 
     const canCopy = computed(() => {
@@ -220,9 +231,10 @@ export function useCopyManager() {
         try {
             const sourcePath = source.value.path
             const targetPaths = targets.value.map((t) => t.path)
-            const count = await invoke<number>('copy_settings', {
+            const count = await invoke<number>('copy_settings_selective', {
                 sourcePath,
                 targetPaths,
+                excludedGroups: excludedCopyGroups.value,
             })
             toast.success(t('toast.settingsCopied'), {
                 description: t('toast.settingsCopiedDesc', { count }),
@@ -500,5 +512,6 @@ export function useCopyManager() {
         cancelImport,
         importAnalysis,
         showImportDialog,
+        copyGroupSelection,
     }
 }

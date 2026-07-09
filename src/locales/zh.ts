@@ -84,6 +84,7 @@ export default {
         settings: '设置',
         backups: '备份',
         toggleTheme: '切换主题',
+        preview: '预览版',
     },
     // 备份相关
     backup: {
@@ -122,6 +123,25 @@ export default {
         noTargetsSelected: '未选择目标',
         copying: '复制中...',
         copySettings: '复制设置',
+        copyOptions: '复制内容',
+        selectiveHint: '未勾选的分组将保留目标自身的设置，其余内容全部复制。',
+    },
+    // 选择性复制分组
+    copyGroups: {
+        overview: '总览配置',
+        probes: '探针阵型',
+        suppress: '已抑制的对话框',
+        audio: '音频设置',
+        camera_graphics: '相机与图形',
+        market: '市场与合同',
+        slots: '模块槽位布局',
+        tabgroups: '窗口标签组',
+        search_history: '搜索历史与建议',
+        windows: '窗口布局',
+        neocom: 'Neocom侧边栏',
+        chat: '聊天频道',
+        infopanels: '信息面板',
+        dockpanels: '停靠面板',
     },
     // 表格相关
     table: {
@@ -144,6 +164,32 @@ export default {
         useAsSource: '用作源',
         applyTo: '应用到...',
         delete: '删除',
+        editFormations: '探针阵型',
+    },
+    // 探针阵型编辑器
+    formationEditor: {
+        title: '探针阵型 — {name}',
+        loading: '加载中...',
+        noFormations: '还没有自定义阵型。添加一个开始吧。',
+        formations: '阵型',
+        probes: '探针',
+        addFormation: '添加阵型',
+        duplicate: '复制阵型',
+        deleteFormation: '删除阵型',
+        name: '阵型名称',
+        addProbe: '添加探针',
+        maxProbes: '一个阵型最多容纳8个探针',
+        allRanges: '全部范围',
+        scale: '缩放',
+        apply: '应用',
+        previewHint: '拖动旋转，滚轮缩放',
+        save: '保存到文件',
+        saved: '阵型已保存',
+        savedDesc: '已自动创建之前文件的备份',
+        fileChanged: '此文件已在磁盘上更改。重新加载将放弃未保存的编辑。',
+        reload: '重新加载',
+        loadFailed: '加载探针阵型失败',
+        saveFailed: '保存探针阵型失败',
     },
     // 导入对话框
     importDialog: {

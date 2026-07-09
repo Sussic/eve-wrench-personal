@@ -86,6 +86,7 @@ export default {
         settings: 'Settings',
         backups: 'Backups',
         toggleTheme: 'Toggle theme',
+        preview: 'Preview',
     },
     // Backup related
     backup: {
@@ -124,6 +125,26 @@ export default {
         noTargetsSelected: 'No targets selected',
         copying: 'Copying...',
         copySettings: 'Copy Settings',
+        copyOptions: 'What to copy',
+        selectiveHint:
+            'Unchecked groups keep the target’s own settings. Everything else is copied.',
+    },
+    // Selective copy groups
+    copyGroups: {
+        overview: 'Overview profiles',
+        probes: 'Probe formations',
+        suppress: 'Suppressed dialogs',
+        audio: 'Audio settings',
+        camera_graphics: 'Camera & graphics',
+        market: 'Market & contracts',
+        slots: 'Module slot layout',
+        tabgroups: 'Window tab groups',
+        search_history: 'Search history & suggestions',
+        windows: 'Window layout',
+        neocom: 'Neocom sidebar',
+        chat: 'Chat channels',
+        infopanels: 'Info panels',
+        dockpanels: 'Docked panels',
     },
     // Table related
     table: {
@@ -146,6 +167,33 @@ export default {
         useAsSource: 'Use as source',
         applyTo: 'Apply to...',
         delete: 'Delete',
+        editFormations: 'Probe formations',
+    },
+    // Probe Formation Editor
+    formationEditor: {
+        title: 'Probe Formations — {name}',
+        loading: 'Loading...',
+        noFormations: 'No custom formations yet. Add one to get started.',
+        formations: 'Formations',
+        probes: 'Probes',
+        addFormation: 'Add formation',
+        duplicate: 'Duplicate formation',
+        deleteFormation: 'Delete formation',
+        name: 'Formation name',
+        addProbe: 'Add probe',
+        maxProbes: 'A formation holds at most 8 probes',
+        allRanges: 'All ranges',
+        scale: 'Scale by',
+        apply: 'Apply',
+        previewHint: 'Drag to rotate, scroll to zoom',
+        save: 'Save to file',
+        saved: 'Formations saved',
+        savedDesc: 'A backup of the previous file was created automatically',
+        fileChanged:
+            'This file changed on disk. Reload to discard your unsaved edits.',
+        reload: 'Reload',
+        loadFailed: 'Failed to load probe formations',
+        saveFailed: 'Failed to save probe formations',
     },
     // Import Dialog
     importDialog: {
