@@ -13,6 +13,21 @@
 
 <img width="1112" height="712" alt="app" src="https://github.com/user-attachments/assets/8ed5f561-79ad-4162-bea2-e1461e152975" />
 
+## ❤️ Standing on the shoulders of TrueBrain
+
+> **All of EVE Wrench's granular settings features exist because of
+> [TrueBrain](https://github.com/TrueBrain)'s work.** His
+> [blue-marshal-rs](https://github.com/TrueBrain/blue-marshal-rs) library is a
+> Rust implementation of EVE Online's `blue.Marshal` binary format — the thing
+> that makes `core_user_*.dat` and `core_char_*.dat` files readable and
+> writable at all. Building on CCP's previously published code, he worked out
+> how the format fits together and built a lossless decode/encode round trip;
+> EVE Wrench "just" puts a UI on top of it.
+>
+> Everything beyond plain file copying — viewing file contents, the probe
+> formation editor, selective copying of individual setting groups — is powered
+> by his library. Thank you!
+
 ## Features
 
 ### Settings Sync
@@ -24,6 +39,20 @@ Copy settings from one character or account to multiple targets with a single cl
 - Syncing characters across different settings profiles
 
 The app enforces type compatibility—account settings can only be copied to other accounts, character settings to other characters.
+
+#### Selective copy
+
+The copy panel lets you choose _what_ to copy. Everything is copied by default, but unchecked groups keep the target's own settings — so you can sync your overview, window layouts, and suppressed dialogs everywhere without wiping a character's carefully arranged module slot layout or typed search history. Every target file is backed up automatically before a selective copy.
+
+Available groups: overview profiles, probe formations, suppressed dialogs, audio, camera & graphics, market & contracts, module slot layout, window tab groups (accounts); window layout, Neocom sidebar, chat channels, info panels, docked panels (characters); search history & suggestions (both).
+
+### Probe Formation Editor
+
+Edit custom probe scanner formations without launching the client: open the ⋯ menu on any account and pick "Probe formations". The editor opens in its own window with a rotatable 3D preview (with distance rings and a north marker), per-probe coordinates in km, discrete scan-range selection, and one-click scaling of a whole formation. Saves re-encode the settings file losslessly and create a backup first.
+
+### View File Contents
+
+The ⋯ menu on any account or character can decode its settings file and show the full contents as JSON — useful for digging into what EVE actually stores.
 
 ### Backup & Restore
 
@@ -70,6 +99,8 @@ Some useful client settings aren't exposed in EVE's UI. EVE Wrench gives you acc
 ### Auto-Update Notifications
 
 The app checks for new versions on GitHub at startup. When an update is available, a modal shows the version change and release notes with a direct link to download.
+
+Stable builds only ever see stable releases. Preview builds (versions with a pre-release suffix, marked with a "Preview" badge in the title bar) are also notified about newer previews.
 
 ---
 
@@ -239,6 +270,7 @@ npm run tauri build
 
 - **Frontend**: Vue 3, TypeScript, Tailwind CSS, shadcn-vue
 - **Backend**: Rust, Tauri 2
+- **Settings decoding**: [blue-marshal](https://github.com/TrueBrain/blue-marshal-rs) by TrueBrain
 - **APIs**: EVE ESI (character info)
 - **Icons**: Lucide
 
