@@ -913,10 +913,21 @@ pub async fn open_formation_editor(
         percent_encode(&entry_name)
     );
 
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
-        .title(format!("Probe Formations — {}", entry_name))
-        .inner_size(1150.0, 780.0)
-        .min_inner_size(900.0, 620.0)
+    let builder =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+            .title(format!("Probe Formations — {}", entry_name))
+            .inner_size(1150.0, 780.0)
+            .min_inner_size(900.0, 620.0)
+            .decorations(true);
+
+    // Match the main window's chrome: overlaid traffic lights with a hidden
+    // native title on macOS; Windows/Linux draw custom controls in the webview.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+
+    builder
         .build()
         .map_err(|e| format!("Failed to open editor window: {}", e))?;
 
@@ -1066,8 +1077,11 @@ pub fn copy_settings_selective(
     source_path: String,
     target_paths: Vec<String>,
     excluded_groups: Vec<String>,
+    backup: Option<bool>,
 ) -> Result<u32, String> {
     use filetime::FileTime;
+
+    let backup = backup.unwrap_or(true);
 
     let (source_json, _) = load_settings_json(Path::new(&source_path))?;
     let mut success_count = 0u32;
@@ -1098,8 +1112,8 @@ pub fn copy_settings_selective(
             continue;
         };
 
-        // Back up the target before touching it
-        if auto_backup(path, "pre-selective-copy").is_err() {
+        // Back up the target before touching it, unless disabled
+        if backup && auto_backup(path, "pre-selective-copy").is_err() {
             continue;
         }
         if fs::write(path, bytes).is_ok() {
@@ -1135,13 +1149,16 @@ pub fn write_probe_formations(
     app: tauri::AppHandle,
     file_path: String,
     formations: Vec<ProbeFormation>,
+    backup: Option<bool>,
 ) -> Result<(), String> {
     let path = Path::new(&file_path);
     if !path.exists() {
         return Err("Settings file does not exist".into());
     }
 
-    auto_backup(path, "pre-formation-edit")?;
+    if backup.unwrap_or(true) {
+        auto_backup(path, "pre-formation-edit")?;
+    }
     write_formations_to_file(path, &formations)?;
 
     emit_data_changed(&app);
@@ -1338,6 +1355,23 @@ pub fn delete_backup(app: tauri::AppHandle, backup_path: String) -> Result<(), S
     fs::remove_file(path).map_err(|e| e.to_string())?;
     emit_data_changed(&app);
     Ok(())
+}
+
+// Deletes several backups at once, returning how many were removed. Missing
+// files are skipped rather than failing the whole batch.
+#[tauri::command]
+pub fn delete_backups(app: tauri::AppHandle, backup_paths: Vec<String>) -> Result<usize, String> {
+    let mut deleted = 0;
+    for backup_path in backup_paths {
+        let path = PathBuf::from(&backup_path);
+        if path.exists() && fs::remove_file(&path).is_ok() {
+            deleted += 1;
+        }
+    }
+    if deleted > 0 {
+        emit_data_changed(&app);
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
