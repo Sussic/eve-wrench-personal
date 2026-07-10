@@ -2,7 +2,6 @@ import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { load } from '@tauri-apps/plugin-store'
 import { toast } from 'vue-sonner'
 import type {
     SourceItem,
@@ -17,6 +16,11 @@ import type {
 } from '@/types'
 import { isBackup } from '@/types'
 import { defaultGroupSelection, groupsForKind } from '@/lib/copyGroups'
+import {
+    settingsStore,
+    getAutoBackup,
+    setAutoBackup as persistAutoBackup,
+} from '@/lib/settingsStore'
 import { useConfirm } from './useConfirm'
 import { usePrompt } from './usePrompt'
 import { useI18n } from './useI18n'
@@ -31,6 +35,7 @@ const importAnalysis = ref<ImportAnalysis | null>(null)
 const importFilePath = ref<string | null>(null)
 const showImportDialog = ref(false)
 const copyGroupSelection = ref<Record<string, boolean>>(defaultGroupSelection())
+const autoBackup = ref(true)
 let listenerSetup = false
 
 async function setupListener(loadDataFn: () => Promise<void>) {
@@ -99,14 +104,20 @@ export function useCopyManager() {
         }
     }
 
-    async function loadCustomPath() {
+    async function loadSettings() {
         try {
-            const store = await load('settings.json')
+            const store = await settingsStore()
             customEvePath.value =
                 (await store.get<string>('customEvePath')) ?? null
         } catch {
             customEvePath.value = null
         }
+        autoBackup.value = await getAutoBackup()
+    }
+
+    async function setAutoBackup(enabled: boolean) {
+        autoBackup.value = enabled
+        await persistAutoBackup(enabled)
     }
 
     async function selectCustomEvePath() {
@@ -118,7 +129,7 @@ export function useCopyManager() {
         if (!selected) return
 
         try {
-            const store = await load('settings.json')
+            const store = await settingsStore()
             await store.set('customEvePath', selected)
             customEvePath.value = selected
             toast.success(t('toast.customPathSet'), {
@@ -132,7 +143,7 @@ export function useCopyManager() {
 
     async function clearCustomEvePath() {
         try {
-            const store = await load('settings.json')
+            const store = await settingsStore()
             await store.delete('customEvePath')
             customEvePath.value = null
             toast.success(t('toast.pathReset'), {
@@ -146,7 +157,7 @@ export function useCopyManager() {
 
     async function init() {
         await setupListener(loadData)
-        await loadCustomPath()
+        await loadSettings()
         await loadData()
     }
 
@@ -235,6 +246,7 @@ export function useCopyManager() {
                 sourcePath,
                 targetPaths,
                 excludedGroups: excludedCopyGroups.value,
+                backup: autoBackup.value,
             })
             toast.success(t('toast.settingsCopied'), {
                 description: t('toast.settingsCopiedDesc', { count }),
@@ -292,6 +304,38 @@ export function useCopyManager() {
                 source.value &&
                 isBackup(source.value) &&
                 source.value.id === backup.id
+            ) {
+                source.value = null
+            }
+        } catch (e: unknown) {
+            toast.error(t('toast.deleteFailed'), { description: String(e) })
+        }
+    }
+
+    async function deleteBackups(backups: BackupEntry[]) {
+        if (backups.length === 0) return
+        const confirmed = await confirm({
+            title: t('dialog.deleteBackups'),
+            description: t('dialog.deleteBackupsDesc', {
+                count: backups.length,
+            }),
+            confirmText: t('dialog.delete'),
+            destructive: true,
+        })
+        if (!confirmed) return
+
+        try {
+            const ids = new Set(backups.map((b) => b.id))
+            const count = await invoke<number>('delete_backups', {
+                backupPaths: backups.map((b) => b.path),
+            })
+            toast.success(t('toast.backupsDeleted'), {
+                description: t('toast.backupsDeletedDesc', { count }),
+            })
+            if (
+                source.value &&
+                isBackup(source.value) &&
+                ids.has(source.value.id)
             ) {
                 source.value = null
             }
@@ -498,6 +542,9 @@ export function useCopyManager() {
         executeCopy,
         createBackup,
         deleteBackup,
+        deleteBackups,
+        autoBackup,
+        setAutoBackup,
         getBackupsForEntry,
         restoreBackup,
         applyBackup,

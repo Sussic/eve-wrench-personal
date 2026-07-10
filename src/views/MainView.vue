@@ -43,6 +43,9 @@ const {
     executeCopy,
     createBackup,
     deleteBackup,
+    deleteBackups,
+    autoBackup,
+    setAutoBackup,
     restoreBackup,
     applyBackup,
     isSource,
@@ -104,12 +107,14 @@ onMounted(init)
                 :loading="loading"
                 :color-mode="colorMode"
                 :custom-eve-path="customEvePath"
+                :auto-backup="autoBackup"
                 @refresh="refresh"
                 @toggle-theme="toggleDarkMode"
                 @select-eve-path="selectCustomEvePath"
                 @clear-eve-path="clearCustomEvePath"
                 @export-settings="exportSettings"
                 @import-settings="importSettings"
+                @set-auto-backup="setAutoBackup"
             />
 
             <main class="flex flex-1 overflow-hidden">
@@ -167,6 +172,7 @@ onMounted(init)
                         @add-all-from-profile="addAllFromProfile"
                         @set-backup-source="setSource"
                         @delete-backup="deleteBackup"
+                        @delete-backups="deleteBackups"
                         @refresh="refresh"
                         @set-brackets-always-show="setBracketsAlwaysShow"
                     />

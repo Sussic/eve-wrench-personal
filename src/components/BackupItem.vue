@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { TableCell, TableRow } from '@/components/ui/table'
 import {
     DropdownMenu,
@@ -26,6 +27,7 @@ const { t } = useI18n()
 defineProps<{
     backup: BackupEntry
     isSource: boolean
+    selected: boolean
     targets: SettingsEntry[]
 }>()
 
@@ -33,11 +35,23 @@ const emit = defineEmits<{
     setSource: [backup: BackupEntry]
     delete: [backup: BackupEntry]
     apply: [backup: BackupEntry, target: SettingsEntry]
+    toggleSelect: [checked: boolean]
 }>()
 </script>
 
 <template>
-    <TableRow :class="{ 'bg-primary/20': isSource }">
+    <TableRow
+        :class="{
+            'bg-primary/20': isSource,
+            'bg-muted/50': selected && !isSource,
+        }"
+    >
+        <TableCell class="w-8">
+            <Checkbox
+                :model-value="selected"
+                @update:model-value="emit('toggleSelect', $event === true)"
+            />
+        </TableCell>
         <TableCell class="w-8">
             <div class="flex size-6 items-center justify-center">
                 <Rocket
@@ -61,7 +75,7 @@ const emit = defineEmits<{
         <TableCell class="w-12 text-right">
             <DropdownMenu>
                 <DropdownMenuTrigger as-child>
-                    <Button variant="ghost" size="icon" class="size-7">
+                    <Button variant="ghost" size="icon">
                         <MoreHorizontal class="size-4" />
                     </Button>
                 </DropdownMenuTrigger>

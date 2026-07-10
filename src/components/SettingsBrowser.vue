@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Archive, ChevronUp, ChevronDown } from 'lucide-vue-next'
+import { Archive, ChevronUp, ChevronDown, Trash2 } from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
     Table,
     TableBody,
@@ -38,6 +40,7 @@ const emit = defineEmits<{
     addAllFromProfile: [profile: ProfileData, kind: SettingsKind]
     setBackupSource: [backup: BackupEntry]
     deleteBackup: [backup: BackupEntry]
+    deleteBackups: [backups: BackupEntry[]]
     refresh: []
     setBracketsAlwaysShow: [serverPath: string, enabled: boolean]
 }>()
@@ -84,6 +87,48 @@ const sortedBackups = computed(() => {
         return backupSortDir.value === 'asc' ? cmp : -cmp
     })
 })
+
+// ── Backup multi-select ──────────────────────────────────────────────────
+const selectedBackupIds = ref<Set<string>>(new Set())
+
+const selectedBackups = computed(() =>
+    props.appData.backups.filter((b) => selectedBackupIds.value.has(b.id))
+)
+const allBackupsSelected = computed(
+    () =>
+        sortedBackups.value.length > 0 &&
+        sortedBackups.value.every((b) => selectedBackupIds.value.has(b.id))
+)
+
+function toggleBackup(id: string, checked: boolean) {
+    const next = new Set(selectedBackupIds.value)
+    if (checked) next.add(id)
+    else next.delete(id)
+    selectedBackupIds.value = next
+}
+
+function toggleAllBackups(checked: boolean) {
+    selectedBackupIds.value = checked
+        ? new Set(sortedBackups.value.map((b) => b.id))
+        : new Set()
+}
+
+function deleteSelectedBackups() {
+    emit('deleteBackups', selectedBackups.value)
+}
+
+// Drop selections whose backups no longer exist (e.g. after a delete)
+watch(
+    () => props.appData.backups,
+    (backups) => {
+        const ids = new Set(backups.map((b) => b.id))
+        if ([...selectedBackupIds.value].some((id) => !ids.has(id))) {
+            selectedBackupIds.value = new Set(
+                [...selectedBackupIds.value].filter((id) => ids.has(id))
+            )
+        }
+    }
+)
 
 function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
     const entries: SettingsEntry[] = []
@@ -173,11 +218,42 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                         >
                             {{ appData.backups.length }}
                         </span>
+                        <div
+                            v-if="selectedBackups.length"
+                            class="ml-auto flex items-center gap-2"
+                        >
+                            <span class="text-sm text-muted-foreground">
+                                {{
+                                    t('backup.selectedCount', {
+                                        count: selectedBackups.length,
+                                    })
+                                }}
+                            </span>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                class="h-7"
+                                @click="deleteSelectedBackups"
+                            >
+                                <Trash2 class="mr-1 size-3.5" />
+                                {{ t('backup.deleteSelected') }}
+                            </Button>
+                        </div>
                     </div>
                     <div class="rounded-md border">
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead class="w-8">
+                                        <Checkbox
+                                            :model-value="allBackupsSelected"
+                                            @update:model-value="
+                                                toggleAllBackups(
+                                                    $event === true
+                                                )
+                                            "
+                                        />
+                                    </TableHead>
                                     <TableHead class="w-8"></TableHead>
                                     <TableHead
                                         class="cursor-pointer select-none"
@@ -232,12 +308,16 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                     :key="backup.id"
                                     :backup="backup"
                                     :is-source="isBackupSource(backup)"
+                                    :selected="selectedBackupIds.has(backup.id)"
                                     :targets="getTargetsForBackup(backup)"
                                     @set-source="
                                         emit('setBackupSource', $event)
                                     "
                                     @delete="emit('deleteBackup', $event)"
                                     @apply="(b, t) => emit('applyBackup', b, t)"
+                                    @toggle-select="
+                                        toggleBackup(backup.id, $event)
+                                    "
                                 />
                             </TableBody>
                         </Table>
