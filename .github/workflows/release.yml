@@ -7,7 +7,39 @@ on:
       - release
 
 jobs:
+  # Build the "What's Changed" notes from conventional commits since the last
+  # release tag, and hand them to the release job.
+  changelog:
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --unreleased --strip header
+          output: RELEASE_NOTES.md
+
+      - name: Prepare notes output
+        id: notes
+        shell: bash
+        run: |
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "See the assets below to download and install EVE Wrench." > RELEASE_NOTES.md
+          fi
+          {
+            echo 'notes<<CHANGELOG_EOF'
+            cat RELEASE_NOTES.md
+            echo CHANGELOG_EOF
+          } >> "$GITHUB_OUTPUT"
+
   publish-tauri:
+    needs: changelog
     permissions:
       contents: write
     strategy:
@@ -64,7 +96,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "EVE Wrench v__VERSION__"
-          releaseBody: "See the assets to download and install EVE Wrench."
+          releaseBody: ${{ needs.changelog.outputs.notes }}
           releaseDraft: true
           prerelease: ${{ steps.version.outputs.prerelease }}
           args: ${{ matrix.args }}
