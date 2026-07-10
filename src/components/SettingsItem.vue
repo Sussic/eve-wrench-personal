@@ -125,7 +125,7 @@ function startEdit() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        class="size-7 shrink-0"
+                        class="shrink-0"
                         @click="saveAlias"
                     >
                         <Check class="size-4" />
@@ -133,7 +133,7 @@ function startEdit() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        class="size-7 shrink-0"
+                        class="shrink-0"
                         @click="cancelEdit"
                     >
                         <X class="size-4" />
@@ -150,7 +150,6 @@ function startEdit() {
                         v-if="canEditAlias"
                         variant="ghost"
                         size="icon"
-                        class="size-6"
                         @click="startEdit"
                     >
                         <Pencil class="size-3" />
@@ -168,7 +167,6 @@ function startEdit() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-7"
                             :disabled="isSource"
                             @click="emit('setSource', entry)"
                         >
@@ -184,7 +182,6 @@ function startEdit() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-7"
                             :disabled="!sourceKind || sourceKind !== entry.kind"
                             @click="emit('addTarget', entry)"
                         >
@@ -197,7 +194,7 @@ function startEdit() {
                 </Tooltip>
                 <DropdownMenu>
                     <DropdownMenuTrigger as-child>
-                        <Button variant="ghost" size="icon" class="size-7">
+                        <Button variant="ghost" size="icon">
                             <MoreHorizontal class="size-4" />
                         </Button>
                     </DropdownMenuTrigger>

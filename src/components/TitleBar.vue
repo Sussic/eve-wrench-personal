@@ -1,14 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { platform } from '@tauri-apps/plugin-os'
 import {
     Wrench,
-    Minus,
-    Square,
-    X,
-    Copy,
     Sun,
     Moon,
     RefreshCw,
@@ -27,18 +21,22 @@ import {
 } from '@/components/ui/tooltip'
 import {
     DropdownMenu,
+    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import WindowControls from '@/components/WindowControls.vue'
+import { useWindowChrome } from '@/composables/useWindowChrome'
 import { useI18n } from '@/composables/useI18n'
 
 defineProps<{
     loading: boolean
     colorMode: string
     customEvePath: string | null
+    autoBackup: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,18 +46,15 @@ const emit = defineEmits<{
     clearEvePath: []
     exportSettings: []
     importSettings: []
+    setAutoBackup: [enabled: boolean]
 }>()
 
 const { t, locale, languages, changeLanguage } = useI18n()
-const appWindow = getCurrentWindow()
-const isMac = ref(true)
-const isMaximized = ref(false)
+const { isMac, isMaximized, minimize, toggleMaximize, close } =
+    useWindowChrome()
 const appInfo = ref<{ version: string; preview: boolean } | null>(null)
 
 onMounted(async () => {
-    isMac.value = platform() === 'macos'
-    isMaximized.value = await appWindow.isMaximized()
-
     try {
         appInfo.value = await invoke<{ version: string; preview: boolean }>(
             'get_app_info'
@@ -67,27 +62,7 @@ onMounted(async () => {
     } catch {
         appInfo.value = null
     }
-
-    if (!isMac.value) {
-        await appWindow.setDecorations(false)
-    }
-
-    appWindow.onResized(async () => {
-        isMaximized.value = await appWindow.isMaximized()
-    })
 })
-
-async function minimize() {
-    await appWindow.minimize()
-}
-
-async function toggleMaximize() {
-    await appWindow.toggleMaximize()
-}
-
-async function close() {
-    await appWindow.close()
-}
 </script>
 
 <template>
@@ -122,7 +97,6 @@ async function close() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        class="size-8"
                         :title="t('titleBar.settings')"
                     >
                         <Settings class="size-4" />
@@ -167,6 +141,18 @@ async function close() {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuLabel>{{
+                        t('settings.backups')
+                    }}</DropdownMenuLabel>
+                    <DropdownMenuCheckboxItem
+                        :model-value="autoBackup"
+                        @update:model-value="
+                            emit('setAutoBackup', $event === true)
+                        "
+                    >
+                        {{ t('settings.autoBackup') }}
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>{{
                         t('settings.language')
                     }}</DropdownMenuLabel>
                     <DropdownMenuItem
@@ -189,7 +175,6 @@ async function close() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        class="size-8"
                         @click="emit('toggleTheme')"
                     >
                         <Sun v-if="colorMode === 'dark'" class="size-4" />
@@ -204,7 +189,6 @@ async function close() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        class="size-8"
                         :disabled="loading"
                         @click="emit('refresh')"
                     >
@@ -218,65 +202,14 @@ async function close() {
             </Tooltip>
 
             <!-- Window controls (Windows/Linux only) -->
-            <template v-if="!isMac">
-                <div class="ml-2 flex">
-                    <button
-                        class="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        title="Minimize"
-                        @click="minimize"
-                    >
-                        <Minus class="size-4" :stroke-width="1.5" />
-                    </button>
-                    <button
-                        class="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        :title="isMaximized ? 'Restore' : 'Maximize'"
-                        @click="toggleMaximize"
-                    >
-                        <Copy
-                            v-if="isMaximized"
-                            class="size-3.5"
-                            :stroke-width="1.5"
-                        />
-                        <Square v-else class="size-3" :stroke-width="1.5" />
-                    </button>
-                    <button
-                        class="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
-                        :title="t('common.close')"
-                        @click="close"
-                    >
-                        <X class="size-4" :stroke-width="1.5" />
-                    </button>
-                </div>
-            </template>
+            <WindowControls
+                v-if="!isMac"
+                class="ml-2"
+                :is-maximized="isMaximized"
+                @minimize="minimize"
+                @toggle-maximize="toggleMaximize"
+                @close="close"
+            />
         </div>
     </header>
 </template>
-
-<style>
-[data-tauri-drag-region] {
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-app-region: drag;
-    app-region: drag;
-}
-
-[data-tauri-drag-region] * {
-    -webkit-user-select: none;
-    user-select: none;
-}
-
-[data-tauri-drag-region] span,
-[data-tauri-drag-region] svg {
-    pointer-events: none;
-}
-
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] [role='button'],
-[data-tauri-drag-region] a,
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] [data-no-drag] {
-    -webkit-app-region: no-drag;
-    app-region: no-drag;
-    pointer-events: auto;
-}
-</style>

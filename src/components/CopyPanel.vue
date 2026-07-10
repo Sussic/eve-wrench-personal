@@ -170,7 +170,7 @@ const visibleGroups = computed(() =>
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-5 opacity-0 transition-opacity group-hover:opacity-100"
+                            class="opacity-0 transition-opacity group-hover:opacity-100"
                             @click="emit('removeTarget', target)"
                         >
                             <X class="size-3" />

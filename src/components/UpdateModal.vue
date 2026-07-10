@@ -46,12 +46,7 @@ function openRelease() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    class="size-8"
-                    @click="emit('dismiss')"
-                >
+                <Button variant="ghost" size="icon" @click="emit('dismiss')">
                     <X class="size-5" />
                 </Button>
             </div>

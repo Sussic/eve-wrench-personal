@@ -160,8 +160,10 @@ function handleConfirm() {
                             <Badge variant="destructive">{{
                                 analysis.conflicts.length
                             }}</Badge>
-                            <button
-                                class="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                class="ml-auto h-auto px-1.5 py-0.5 text-xs text-muted-foreground"
                                 @click="toggleAll(!allSelected)"
                             >
                                 {{
@@ -169,7 +171,7 @@ function handleConfirm() {
                                         ? t('importDialog.deselectAll')
                                         : t('importDialog.selectAll')
                                 }}
-                            </button>
+                            </Button>
                         </div>
                         <ul
                             class="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 pl-6"

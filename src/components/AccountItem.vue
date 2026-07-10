@@ -117,7 +117,7 @@ async function openFormationEditor() {
                 <Button
                     variant="ghost"
                     size="icon"
-                    class="size-7 shrink-0"
+                    class="shrink-0"
                     @click="saveAlias"
                 >
                     <Check class="size-4" />
@@ -125,7 +125,7 @@ async function openFormationEditor() {
                 <Button
                     variant="ghost"
                     size="icon"
-                    class="size-7 shrink-0"
+                    class="shrink-0"
                     @click="cancelEdit"
                 >
                     <X class="size-4" />
@@ -136,12 +136,7 @@ async function openFormationEditor() {
                 <span v-if="entry.alias" class="text-muted-foreground"
                     >({{ entry.id }})</span
                 >
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    class="size-6"
-                    @click="startEdit"
-                >
+                <Button variant="ghost" size="icon" @click="startEdit">
                     <Pencil class="size-3" />
                 </Button>
             </div>
@@ -156,7 +151,6 @@ async function openFormationEditor() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-7"
                             :disabled="isSource"
                             @click="emit('setSource', entry)"
                         >
@@ -172,7 +166,6 @@ async function openFormationEditor() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-7"
                             :disabled="!sourceKind || sourceKind !== entry.kind"
                             @click="emit('addTarget', entry)"
                         >
@@ -185,7 +178,7 @@ async function openFormationEditor() {
                 </Tooltip>
                 <DropdownMenu>
                     <DropdownMenuTrigger as-child>
-                        <Button variant="ghost" size="icon" class="size-7">
+                        <Button variant="ghost" size="icon">
                             <MoreHorizontal class="size-4" />
                         </Button>
                     </DropdownMenuTrigger>
