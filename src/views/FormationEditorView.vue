@@ -22,9 +22,23 @@ import {
     Moon,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import WindowControls from '@/components/WindowControls.vue'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import type { FormationProbe, ProbeFormation } from '@/types'
+import {
+    FORMATION_PRESETS,
+    STACK_PRESETS,
+    type FormationPreset,
+} from '@/lib/formationPresets'
 import { useI18n } from '@/composables/useI18n'
 
 const { t } = useI18n()
@@ -204,20 +218,12 @@ function reset() {
     )
 }
 
-function addFormation() {
-    formations.value.push({
-        name: `Formation ${formations.value.length + 1}`,
-        probes: [
-            { x: 250, y: 0, z: 0, range: 32 },
-            { x: -250, y: 0, z: 0, range: 32 },
-            { x: 0, y: 0, z: 250, range: 32 },
-            { x: 0, y: 0, z: -250, range: 32 },
-            { x: 0, y: 250, z: 0, range: 32 },
-            { x: 0, y: -250, z: 0, range: 32 },
-            { x: 0, y: 500, z: 0, range: 32 },
-            { x: 0, y: -500, z: 0, range: 32 },
-        ],
-    })
+function addPreset(preset: FormationPreset) {
+    const name =
+        preset.id === 'blank'
+            ? `Formation ${formations.value.length + 1}`
+            : t(`formationEditor.presets.${preset.id}`)
+    formations.value.push({ name, probes: preset.probes() })
     selected.value = formations.value.length - 1
 }
 
@@ -564,14 +570,52 @@ function toggleTheme() {
                             {{ t('formationEditor.formations') }}
                         </span>
                         <div class="flex items-center gap-0.5">
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                :title="t('formationEditor.addFormation')"
-                                @click="addFormation"
-                            >
-                                <Plus class="size-3.5" />
-                            </Button>
+                            <DropdownMenu>
+                                <DropdownMenuTrigger as-child>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        :title="
+                                            t('formationEditor.addFormation')
+                                        "
+                                    >
+                                        <Plus class="size-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                    <DropdownMenuItem
+                                        v-for="preset in FORMATION_PRESETS"
+                                        :key="preset.id"
+                                        @select="addPreset(preset)"
+                                    >
+                                        {{
+                                            t(
+                                                `formationEditor.presets.${preset.id}`
+                                            )
+                                        }}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            {{
+                                                t('formationEditor.presetStack')
+                                            }}
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <DropdownMenuItem
+                                                v-for="preset in STACK_PRESETS"
+                                                :key="preset.id"
+                                                @select="addPreset(preset)"
+                                            >
+                                                {{
+                                                    t(
+                                                        `formationEditor.presets.${preset.id}`
+                                                    )
+                                                }}
+                                            </DropdownMenuItem>
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
                             <Button
                                 v-if="current"
                                 variant="ghost"
