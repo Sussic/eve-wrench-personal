@@ -149,3 +149,33 @@
         background: transparent;
     }
 }
+
+/* Custom-titlebar drag regions — global so every app window (main + editor)
+   picks them up regardless of which components it imports. */
+[data-tauri-drag-region] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-app-region: drag;
+    app-region: drag;
+}
+
+[data-tauri-drag-region] * {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+[data-tauri-drag-region] span,
+[data-tauri-drag-region] svg {
+    pointer-events: none;
+}
+
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] [role='button'],
+[data-tauri-drag-region] a,
+[data-tauri-drag-region] input,
+[data-tauri-drag-region] select,
+[data-tauri-drag-region] [data-no-drag] {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+    pointer-events: auto;
+}

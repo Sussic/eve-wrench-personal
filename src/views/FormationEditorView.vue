@@ -4,19 +4,33 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getAutoBackup } from '@/lib/settingsStore'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Plus, Copy, Trash2, X, Radar } from 'lucide-vue-next'
+import {
+    Plus,
+    Copy,
+    Trash2,
+    X,
+    Radar,
+    ChevronUp,
+    ChevronDown,
+    Sun,
+    Moon,
+} from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import WindowControls from '@/components/WindowControls.vue'
+import { useWindowChrome } from '@/composables/useWindowChrome'
 import type { FormationProbe, ProbeFormation } from '@/types'
-import { shortenPath } from '@/lib/utils'
 import { useI18n } from '@/composables/useI18n'
 
 const { t } = useI18n()
 const colorMode = useColorMode()
+const { isMac, isMaximized, minimize, toggleMaximize, close } =
+    useWindowChrome()
 
 const props = defineProps<{
     filePath: string
@@ -29,6 +43,21 @@ const AU = 149597870700
 // Edit state uses km for positions and AU for ranges; meters on the wire
 type EditProbe = FormationProbe
 type EditFormation = Omit<ProbeFormation, 'id'>
+type Axis = 'x' | 'y' | 'z'
+
+// EVE solarsystem coordinates (right-handed): +X West, +Y Up, +Z North.
+// Each axis carries its compass poles (N/S, W/E, U/D), shown in both the
+// coordinate table and the 3D scanner.
+const AXES: { key: Axis; pos: string; neg: string; tip: string }[] = [
+    { key: 'z', pos: 'N', neg: 'S', tip: 'axisNS' },
+    { key: 'x', pos: 'W', neg: 'E', tip: 'axisWE' },
+    { key: 'y', pos: 'U', neg: 'D', tip: 'axisUD' },
+]
+const AXIS_DIR: Record<Axis, [number, number, number]> = {
+    x: [1, 0, 0],
+    y: [0, 1, 0],
+    z: [0, 0, 1],
+}
 
 const loading = ref(true)
 const saving = ref(false)
@@ -142,9 +171,11 @@ async function save() {
                 range: p.range * AU,
             })),
         }))
+        // Respect the "back up before changes" setting (shared via the store)
         await invoke('write_probe_formations', {
             filePath: props.filePath,
             formations: payload,
+            backup: await getAutoBackup(),
         })
         // Normalize edit state to what a re-read would return
         formations.value.forEach((f, i) => {
@@ -164,18 +195,27 @@ async function save() {
     }
 }
 
+// Discard unsaved edits, reverting to the last saved state
+function reset() {
+    formations.value = JSON.parse(savedSnapshot.value)
+    selected.value = Math.max(
+        0,
+        Math.min(selected.value, formations.value.length - 1)
+    )
+}
+
 function addFormation() {
     formations.value.push({
         name: `Formation ${formations.value.length + 1}`,
         probes: [
-            { x: 250, y: 0, z: 0, range: 0.25 },
-            { x: -250, y: 0, z: 0, range: 0.25 },
-            { x: 0, y: 0, z: 250, range: 0.25 },
-            { x: 0, y: 0, z: -250, range: 0.25 },
-            { x: 0, y: 250, z: 0, range: 0.25 },
-            { x: 0, y: -250, z: 0, range: 0.25 },
-            { x: 0, y: 500, z: 0, range: 0.25 },
-            { x: 0, y: -500, z: 0, range: 0.25 },
+            { x: 250, y: 0, z: 0, range: 32 },
+            { x: -250, y: 0, z: 0, range: 32 },
+            { x: 0, y: 0, z: 250, range: 32 },
+            { x: 0, y: 0, z: -250, range: 32 },
+            { x: 0, y: 250, z: 0, range: 32 },
+            { x: 0, y: -250, z: 0, range: 32 },
+            { x: 0, y: 500, z: 0, range: 32 },
+            { x: 0, y: -500, z: 0, range: 32 },
         ],
     })
     selected.value = formations.value.length - 1
@@ -196,10 +236,19 @@ function deleteFormation() {
     selected.value = Math.min(selected.value, formations.value.length - 1)
 }
 
+function moveFormation(i: number, dir: -1 | 1) {
+    const j = i + dir
+    if (j < 0 || j >= formations.value.length) return
+    const arr = formations.value
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    if (selected.value === i) selected.value = j
+    else if (selected.value === j) selected.value = i
+}
+
 // EVE probe launchers hold 8 probes, so formations are capped at 8
 function addProbe() {
     if (!current.value || current.value.probes.length >= 8) return
-    current.value.probes.push({ x: 0, y: 0, z: 0, range: 0.25 })
+    current.value.probes.push({ x: 0, y: 0, z: 0, range: 32 })
 }
 
 function removeProbe(index: number) {
@@ -207,11 +256,14 @@ function removeProbe(index: number) {
 }
 
 function applyScale() {
-    if (!current.value || !isFinite(scaleFactor.value)) return
+    const n = scaleFactor.value
+    if (!current.value || !isFinite(n) || n === 0) return
+    // Negative means shrink by that factor: -2 divides by 2 (×0.5)
+    const factor = n < 0 ? 1 / Math.abs(n) : n
     for (const p of current.value.probes) {
-        p.x *= scaleFactor.value
-        p.y *= scaleFactor.value
-        p.z *= scaleFactor.value
+        p.x *= factor
+        p.y *= factor
+        p.z *= factor
     }
 }
 
@@ -238,7 +290,7 @@ function setAllRanges(value: unknown) {
     }
 }
 
-// ── Preview projection ───────────────────────────────────────────────────
+// ── Scanner projection ───────────────────────────────────────────────────
 
 const yaw = ref(0.6)
 const pitch = ref(0.4)
@@ -258,7 +310,7 @@ function onPointerDown(e: PointerEvent) {
     lastX = e.clientX
     lastY = e.clientY
     setTextSelection(false)
-    ;(e.target as Element).setPointerCapture(e.pointerId)
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -303,42 +355,30 @@ const extent = computed(() => {
 
 const previewScale = computed(() => (160 / extent.value) * zoom.value)
 
-const axes = computed(() => {
+// Compass-coloured axes, drawn subtle so the probes stay the focus
+const sceneAxes = computed(() => {
     const e = extent.value
-    return (
-        [
-            { label: 'X', x: e, y: 0, z: 0, color: '#f85149' },
-            { label: 'Y', x: 0, y: e, z: 0, color: '#3fb950' },
-            { label: 'Z', x: 0, y: 0, z: e, color: '#58a6ff' },
-        ] as const
-    ).map((axis) => {
-        const from = project(-axis.x, -axis.y, -axis.z)
-        const to = project(axis.x, axis.y, axis.z)
-        const s = previewScale.value
+    const s = previewScale.value
+    return AXES.map((a) => {
+        const [dx, dy, dz] = AXIS_DIR[a.key]
+        const from = project(-dx * e, -dy * e, -dz * e)
+        const to = project(dx * e, dy * e, dz * e)
+        const posEnd = project(dx * e * 1.16, dy * e * 1.16, dz * e * 1.16)
+        const negEnd = project(-dx * e * 1.16, -dy * e * 1.16, -dz * e * 1.16)
         return {
-            label: axis.label,
-            color: axis.color,
+            key: a.key,
+            pos: a.pos,
+            neg: a.neg,
+            north: a.key === 'z',
             x1: from.sx * s,
             y1: from.sy * s,
             x2: to.sx * s,
             y2: to.sy * s,
+            posX: posEnd.sx * s,
+            posY: posEnd.sy * s,
+            negX: negEnd.sx * s,
+            negY: negEnd.sy * s,
         }
-    })
-})
-
-// EVE solarsystem coordinates (right-handed): +Z is North, +Y is Up, +X is West
-const compass = computed(() => {
-    const e = extent.value * 1.14
-    const s = previewScale.value
-    return [
-        { label: 'N', x: 0, y: 0, z: e, emphasis: true },
-        { label: 'S', x: 0, y: 0, z: -e, emphasis: false },
-        { label: 'W', x: e, y: 0, z: 0, emphasis: false },
-        { label: 'E', x: -e, y: 0, z: 0, emphasis: false },
-        { label: '↑', x: 0, y: e, z: 0, emphasis: false },
-    ].map((m) => {
-        const p = project(m.x, m.y, m.z)
-        return { ...m, sx: p.sx * s, sy: p.sy * s }
     })
 })
 
@@ -357,9 +397,11 @@ function formatDistance(km: number): string {
     return `${Math.round(km).toLocaleString()} km`
 }
 
-// Holographic scale rings in the horizontal (XZ) plane
+const ringStep = computed(() => niceStep(extent.value / 3))
+
+// Holographic scale rings in the horizontal (equatorial) plane
 const rings = computed(() => {
-    const step = niceStep(extent.value / 3)
+    const step = ringStep.value
     const s = previewScale.value
     const SEGMENTS = 72
     return [step, step * 2, step * 3].map((radius) => {
@@ -373,7 +415,6 @@ const rings = computed(() => {
             )
             points.push(`${(p.sx * s).toFixed(1)},${(p.sy * s).toFixed(1)}`)
         }
-        // Label sits on the ring's south-west arc, usually facing the viewer
         const labelPos = project(
             radius * Math.SQRT1_2,
             0,
@@ -389,16 +430,42 @@ const rings = computed(() => {
     })
 })
 
+// Faint radial spokes in the equatorial plane for a scanner-grid feel
+const spokes = computed(() => {
+    const r = ringStep.value * 3
+    const s = previewScale.value
+    return Array.from({ length: 8 }, (_, i) => {
+        const angle = (i / 8) * Math.PI * 2
+        const p = project(r * Math.cos(angle), 0, r * Math.sin(angle))
+        return { x: p.sx * s, y: p.sy * s }
+    })
+})
+
+// Each probe carries a tether down to its equatorial-plane shadow so height
+// (north/south vs up/down) reads at a glance
 const projectedProbes = computed(() => {
     if (!current.value) return []
     const s = previewScale.value
     return current.value.probes
         .map((p, index) => {
-            const { sx, sy, depth } = project(p.x, p.y, p.z)
-            return { index, x: sx * s, y: sy * s, depth, probe: p }
+            const top = project(p.x, p.y, p.z)
+            const base = project(p.x, 0, p.z)
+            return {
+                index,
+                x: top.sx * s,
+                y: top.sy * s,
+                depth: top.depth,
+                baseX: base.sx * s,
+                baseY: base.sy * s,
+                probe: p,
+            }
         })
         .sort((a, b) => a.depth - b.depth)
 })
+
+function toggleTheme() {
+    colorMode.value = colorMode.value === 'dark' ? 'light' : 'dark'
+}
 </script>
 
 <template>
@@ -412,26 +479,43 @@ const projectedProbes = computed(() => {
             :theme="colorMode === 'dark' ? 'dark' : 'light'"
         />
 
-        <header class="flex items-center gap-3 border-b px-4 py-3">
-            <Radar class="size-5 shrink-0 text-muted-foreground" />
-            <div class="min-w-0 flex-1">
-                <h1 class="truncate text-sm font-semibold">
+        <!-- Custom titlebar, matching the main window's chrome -->
+        <header
+            data-tauri-drag-region
+            class="flex h-11 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-sm"
+        >
+            <div class="pointer-events-none flex-1"></div>
+            <div
+                class="pointer-events-none flex min-w-0 items-center gap-2 px-2"
+            >
+                <Radar
+                    class="size-4 shrink-0 text-foreground"
+                    :stroke-width="2"
+                />
+                <h1 class="truncate text-xs font-semibold">
                     {{ t('formationEditor.title', { name: displayName }) }}
                 </h1>
-                <p
-                    class="truncate text-xs text-muted-foreground"
-                    :title="filePath"
-                >
-                    {{ shortenPath(filePath) }}
-                </p>
             </div>
-            <Button
-                size="sm"
-                :disabled="saving || loading || !dirty"
-                @click="save"
+            <div
+                class="pointer-events-none flex flex-1 items-center justify-end gap-1"
             >
-                {{ t('formationEditor.save') }}
-            </Button>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    :title="t('titleBar.toggleTheme')"
+                    @click="toggleTheme"
+                >
+                    <Sun v-if="colorMode === 'dark'" class="size-4" />
+                    <Moon v-else class="size-4" />
+                </Button>
+                <WindowControls
+                    v-if="!isMac"
+                    :is-maximized="isMaximized"
+                    @minimize="minimize"
+                    @toggle-maximize="toggleMaximize"
+                    @close="close"
+                />
+            </div>
         </header>
 
         <div
@@ -467,7 +551,7 @@ const projectedProbes = computed(() => {
         </main>
 
         <main v-else class="flex min-h-0 flex-1">
-            <!-- Left: control column -->
+            <!-- Left: control console -->
             <aside
                 class="flex w-[440px] shrink-0 flex-col border-r bg-muted/20"
             >
@@ -483,7 +567,6 @@ const projectedProbes = computed(() => {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                class="size-6"
                                 :title="t('formationEditor.addFormation')"
                                 @click="addFormation"
                             >
@@ -493,7 +576,6 @@ const projectedProbes = computed(() => {
                                 v-if="current"
                                 variant="ghost"
                                 size="icon"
-                                class="size-6"
                                 :title="t('formationEditor.duplicate')"
                                 @click="duplicateFormation"
                             >
@@ -501,9 +583,8 @@ const projectedProbes = computed(() => {
                             </Button>
                             <Button
                                 v-if="current"
-                                variant="ghost"
+                                variant="ghostDestructive"
                                 size="icon"
-                                class="size-6 hover:text-destructive"
                                 :title="t('formationEditor.deleteFormation')"
                                 @click="deleteFormation"
                             >
@@ -521,7 +602,7 @@ const projectedProbes = computed(() => {
                         <div
                             v-for="(f, i) in formations"
                             :key="i"
-                            class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors"
+                            class="group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors"
                             :class="
                                 i === selected
                                     ? 'bg-background shadow-sm'
@@ -533,7 +614,7 @@ const projectedProbes = computed(() => {
                                 class="h-4 w-0.5 shrink-0 rounded-full transition-colors"
                                 :class="
                                     i === selected
-                                        ? 'bg-cyan-400'
+                                        ? 'bg-primary'
                                         : 'bg-transparent'
                                 "
                             />
@@ -548,6 +629,28 @@ const projectedProbes = computed(() => {
                                 :placeholder="t('formationEditor.name')"
                                 @focus="selected = i"
                             />
+                            <div
+                                class="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100"
+                            >
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    :disabled="i === 0"
+                                    :title="t('formationEditor.moveUp')"
+                                    @click.stop="moveFormation(i, -1)"
+                                >
+                                    <ChevronUp class="size-3.5" />
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    :disabled="i === formations.length - 1"
+                                    :title="t('formationEditor.moveDown')"
+                                    @click.stop="moveFormation(i, 1)"
+                                >
+                                    <ChevronDown class="size-3.5" />
+                                </Button>
+                            </div>
                             <span
                                 class="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
                             >
@@ -571,7 +674,6 @@ const projectedProbes = computed(() => {
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="size-6"
                             :disabled="current.probes.length >= 8"
                             :title="
                                 current.probes.length >= 8
@@ -587,9 +689,14 @@ const projectedProbes = computed(() => {
                         class="grid grid-cols-[1.25rem_1fr_1fr_1fr_4.5rem_1.5rem] items-center gap-1 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
                     >
                         <span></span>
-                        <span class="text-right">X</span>
-                        <span class="text-right">Y</span>
-                        <span class="text-right">Z</span>
+                        <span
+                            v-for="axis in AXES"
+                            :key="axis.key"
+                            class="text-right"
+                            :title="t(`formationEditor.${axis.tip}`)"
+                        >
+                            {{ axis.pos }}/{{ axis.neg }}
+                        </span>
                         <span class="text-center">AU</span>
                         <span></span>
                     </div>
@@ -606,30 +713,14 @@ const projectedProbes = computed(() => {
                                     {{ String(i + 1).padStart(2, '0') }}
                                 </span>
                                 <Input
+                                    v-for="axis in AXES"
+                                    :key="axis.key"
                                     type="number"
                                     step="50"
                                     class="h-7 border-input/50 bg-background/60 px-1.5 text-right font-mono text-xs tabular-nums"
-                                    :model-value="p.x"
+                                    :model-value="p[axis.key]"
                                     @update:model-value="
-                                        updateProbe(p, 'x', $event)
-                                    "
-                                />
-                                <Input
-                                    type="number"
-                                    step="50"
-                                    class="h-7 border-input/50 bg-background/60 px-1.5 text-right font-mono text-xs tabular-nums"
-                                    :model-value="p.y"
-                                    @update:model-value="
-                                        updateProbe(p, 'y', $event)
-                                    "
-                                />
-                                <Input
-                                    type="number"
-                                    step="50"
-                                    class="h-7 border-input/50 bg-background/60 px-1.5 text-right font-mono text-xs tabular-nums"
-                                    :model-value="p.z"
-                                    @update:model-value="
-                                        updateProbe(p, 'z', $event)
+                                        updateProbe(p, axis.key, $event)
                                     "
                                 />
                                 <select
@@ -653,9 +744,9 @@ const projectedProbes = computed(() => {
                                     </option>
                                 </select>
                                 <Button
-                                    variant="ghost"
+                                    variant="ghostDestructive"
                                     size="icon"
-                                    class="size-6 opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                                    class="opacity-0 transition-opacity group-hover:opacity-100"
                                     @click="removeProbe(i)"
                                 >
                                     <X class="size-3" />
@@ -719,90 +810,218 @@ const projectedProbes = computed(() => {
                         {{ t('formationEditor.apply') }}
                     </Button>
                 </section>
+
+                <!-- Actions footer -->
+                <div class="flex items-center gap-3 border-t px-4 py-3">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        :disabled="saving || !dirty"
+                        @click="reset"
+                    >
+                        {{ t('formationEditor.reset') }}
+                    </Button>
+                    <span
+                        v-if="dirty"
+                        class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                    >
+                        <span class="size-1.5 rounded-full bg-amber-400" />
+                        {{ t('formationEditor.unsaved') }}
+                    </span>
+                    <Button
+                        size="sm"
+                        class="ml-auto min-w-28"
+                        :disabled="saving || !dirty"
+                        @click="save"
+                    >
+                        {{ t('formationEditor.save') }}
+                    </Button>
+                </div>
             </aside>
 
-            <!-- Right: full-bleed preview viewport -->
-            <div class="relative min-w-0 flex-1">
+            <!-- Right: scanner viewport -->
+            <div
+                class="scanner relative min-w-0 flex-1 cursor-grab touch-none active:cursor-grabbing"
+                @pointerdown="onPointerDown"
+                @pointermove="onPointerMove"
+                @pointerup="onPointerUp"
+                @pointercancel="onPointerUp"
+                @wheel.prevent="onWheel"
+            >
                 <svg
                     viewBox="-200 -200 400 400"
-                    class="absolute inset-0 h-full w-full cursor-grab touch-none active:cursor-grabbing"
-                    @pointerdown="onPointerDown"
-                    @pointermove="onPointerMove"
-                    @pointerup="onPointerUp"
-                    @pointercancel="onPointerUp"
-                    @wheel.prevent="onWheel"
+                    class="absolute inset-0 h-full w-full text-neutral-800 dark:text-neutral-100"
                 >
+                    <defs>
+                        <filter
+                            id="probe-shadow"
+                            x="-120%"
+                            y="-120%"
+                            width="340%"
+                            height="340%"
+                        >
+                            <feDropShadow
+                                dx="0"
+                                dy="0"
+                                stdDeviation="2"
+                                flood-color="#6b7280"
+                                flood-opacity="0.85"
+                            />
+                        </filter>
+                    </defs>
+
+                    <!-- Equatorial spokes -->
                     <line
-                        v-for="axis in axes"
-                        :key="axis.label"
-                        :x1="axis.x1"
-                        :y1="axis.y1"
-                        :x2="axis.x2"
-                        :y2="axis.y2"
-                        :stroke="axis.color"
-                        stroke-width="1"
-                        opacity="0.5"
+                        v-for="(sp, i) in spokes"
+                        :key="`spoke-${i}`"
+                        x1="0"
+                        y1="0"
+                        :x2="sp.x"
+                        :y2="sp.y"
+                        stroke="currentColor"
+                        stroke-width="0.5"
+                        opacity="0.12"
                     />
-                    <g stroke="#22d3ee" fill="none">
-                        <polygon
-                            v-for="ring in rings"
-                            :key="`ring-${ring.radius}`"
-                            :points="ring.points"
-                            stroke-width="1"
-                            stroke-dasharray="5 4"
-                            opacity="0.25"
-                        />
-                    </g>
+
+                    <!-- Range rings -->
+                    <polygon
+                        v-for="ring in rings"
+                        :key="`ring-${ring.radius}`"
+                        :points="ring.points"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1"
+                        stroke-dasharray="5 5"
+                        opacity="0.28"
+                    />
                     <text
                         v-for="ring in rings"
                         :key="`ring-label-${ring.radius}`"
                         :x="ring.labelX"
                         :y="ring.labelY"
-                        fill="#22d3ee"
+                        fill="currentColor"
                         font-size="7"
-                        opacity="0.7"
+                        font-family="ui-monospace, monospace"
+                        opacity="0.75"
                         dx="3"
                         dy="-2"
                     >
                         {{ ring.label }}
                     </text>
-                    <text
-                        v-for="mark in compass"
-                        :key="`compass-${mark.label}`"
-                        :x="mark.sx"
-                        :y="mark.sy"
-                        :font-size="mark.emphasis ? 13 : 9"
-                        :font-weight="mark.emphasis ? 'bold' : 'normal'"
-                        :fill="mark.emphasis ? '#22d3ee' : 'currentColor'"
-                        :opacity="mark.emphasis ? 1 : 0.5"
-                        class="text-muted-foreground"
-                        text-anchor="middle"
-                        dominant-baseline="middle"
-                    >
-                        {{ mark.label }}
-                    </text>
-                    <circle cx="0" cy="0" r="2" class="fill-muted-foreground" />
-                    <circle
-                        v-for="p in projectedProbes"
-                        :key="p.index"
-                        :cx="p.x"
-                        :cy="p.y"
-                        :r="4 + p.depth / extent"
-                        class="fill-primary stroke-background"
-                        stroke-width="1"
-                    >
-                        <title>
-                            #{{ p.index + 1 }}: ({{ p.probe.x }},
-                            {{ p.probe.y }}, {{ p.probe.z }}) km —
-                            {{ p.probe.range }} AU
-                        </title>
-                    </circle>
+
+                    <!-- Compass axes -->
+                    <g v-for="axis in sceneAxes" :key="`axis-${axis.key}`">
+                        <line
+                            :x1="axis.x1"
+                            :y1="axis.y1"
+                            :x2="axis.x2"
+                            :y2="axis.y2"
+                            stroke="currentColor"
+                            stroke-width="0.75"
+                            opacity="0.4"
+                        />
+                        <text
+                            :x="axis.posX"
+                            :y="axis.posY"
+                            fill="currentColor"
+                            :font-size="axis.north ? 13 : 9"
+                            :font-weight="axis.north ? 700 : 500"
+                            :opacity="axis.north ? 1 : 0.85"
+                            font-family="ui-monospace, monospace"
+                            text-anchor="middle"
+                            dominant-baseline="middle"
+                        >
+                            {{ axis.pos }}
+                        </text>
+                        <text
+                            :x="axis.negX"
+                            :y="axis.negY"
+                            fill="currentColor"
+                            font-size="9"
+                            opacity="0.55"
+                            font-family="ui-monospace, monospace"
+                            text-anchor="middle"
+                            dominant-baseline="middle"
+                        >
+                            {{ axis.neg }}
+                        </text>
+                    </g>
+
+                    <!-- Center reticle -->
+                    <g stroke="currentColor" opacity="0.5">
+                        <line
+                            x1="-4"
+                            y1="0"
+                            x2="4"
+                            y2="0"
+                            stroke-width="0.75"
+                        />
+                        <line
+                            x1="0"
+                            y1="-4"
+                            x2="0"
+                            y2="4"
+                            stroke-width="0.75"
+                        />
+                    </g>
+
+                    <!-- Probes: tether to plane shadow, then glowing node -->
+                    <g v-for="p in projectedProbes" :key="p.index">
+                        <line
+                            :x1="p.x"
+                            :y1="p.y"
+                            :x2="p.baseX"
+                            :y2="p.baseY"
+                            stroke="currentColor"
+                            stroke-width="0.75"
+                            opacity="0.35"
+                        />
+                        <circle
+                            :cx="p.baseX"
+                            :cy="p.baseY"
+                            r="1.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="0.75"
+                            opacity="0.5"
+                        />
+                        <circle
+                            :cx="p.x"
+                            :cy="p.y"
+                            :r="4.5 + p.depth / extent"
+                            fill="#ffffff"
+                            filter="url(#probe-shadow)"
+                        >
+                            <title>
+                                #{{ p.index + 1 }}: ({{ p.probe.x }},
+                                {{ p.probe.y }}, {{ p.probe.z }}) km —
+                                {{ p.probe.range }} AU
+                            </title>
+                        </circle>
+                    </g>
                 </svg>
+
+                <!-- HUD readout -->
+                <div
+                    class="pointer-events-none absolute left-3 top-3 flex flex-col gap-0.5 font-mono text-[10px] uppercase tracking-wider text-neutral-700/80 dark:text-white/70"
+                >
+                    <span
+                        class="text-sm normal-case tracking-normal text-neutral-900 dark:text-white"
+                    >
+                        {{ current?.name }}
+                    </span>
+                    <span>{{ current?.probes.length ?? 0 }}/8 probes</span>
+                    <span
+                        >{{ t('formationEditor.zoom') }}
+                        {{ Math.round(zoom * 100) }}%</span
+                    >
+                </div>
+
                 <div
                     class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center"
                 >
                     <span
-                        class="rounded-full border bg-background/70 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur"
+                        class="rounded-full border border-neutral-400/40 bg-white/60 px-3 py-1 text-[11px] text-neutral-600 backdrop-blur dark:border-white/15 dark:bg-black/40 dark:text-white/60"
                     >
                         {{ t('formationEditor.previewHint') }}
                     </span>
@@ -813,6 +1032,24 @@ const projectedProbes = computed(() => {
 </template>
 
 <style scoped>
+/* Instrument screen: a recessed scanner surface that follows the theme */
+.scanner {
+    background: radial-gradient(
+        130% 130% at 50% 42%,
+        #f0f0f0 0%,
+        #e4e4e4 52%,
+        #d4d4d4 100%
+    );
+}
+.dark .scanner {
+    background: radial-gradient(
+        130% 130% at 50% 42%,
+        #191919 0%,
+        #0d0d0d 52%,
+        #060606 100%
+    );
+}
+
 /* Arrow keys still step; the spinner chrome fights the compact grid */
 input[type='number']::-webkit-outer-spin-button,
 input[type='number']::-webkit-inner-spin-button {

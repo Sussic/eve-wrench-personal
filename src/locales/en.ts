@@ -26,6 +26,9 @@ export default {
         create: 'Create',
         deleteBackup: 'Delete Backup',
         deleteBackupDesc: 'Are you sure you want to delete "{name}"?',
+        deleteBackups: 'Delete Backups',
+        deleteBackupsDesc:
+            'Delete {count} selected backup(s)? This cannot be undone.',
         delete: 'Delete',
         restoreBackup: 'Restore Backup',
         restoreBackupDesc:
@@ -62,6 +65,8 @@ export default {
         backupFailed: 'Backup failed',
         backupDeleted: 'Backup deleted',
         backupDeletedDesc: '"{name}" has been removed',
+        backupsDeleted: 'Backups deleted',
+        backupsDeletedDesc: 'Removed {count} backup(s)',
         deleteFailed: 'Delete failed',
         backupRestored: 'Backup restored',
         backupRestoredDesc: '"{name}" has been applied',
@@ -92,6 +97,8 @@ export default {
     backup: {
         name: 'Name',
         date: 'Date',
+        selectedCount: '{count} selected',
+        deleteSelected: 'Delete selected',
     },
     // Settings related
     settings: {
@@ -100,6 +107,8 @@ export default {
         eveSettingsFolder: 'EVE Settings Folder',
         changeFolder: 'Change folder...',
         resetToDefault: 'Reset to default',
+        backups: 'Backups',
+        autoBackup: 'Back up before changes',
     },
     // Import/Export
     importExport: {
@@ -179,14 +188,22 @@ export default {
         addFormation: 'Add formation',
         duplicate: 'Duplicate formation',
         deleteFormation: 'Delete formation',
+        moveUp: 'Move up',
+        moveDown: 'Move down',
         name: 'Formation name',
         addProbe: 'Add probe',
         maxProbes: 'A formation holds at most 8 probes',
         allRanges: 'All ranges',
         scale: 'Scale by',
         apply: 'Apply',
+        axisNS: 'North (+) / South (−) · km',
+        axisWE: 'West (+) / East (−) · km',
+        axisUD: 'Up (+) / Down (−) · km',
+        zoom: 'Zoom',
         previewHint: 'Drag to rotate, scroll to zoom',
         save: 'Save to file',
+        reset: 'Reset',
+        unsaved: 'Unsaved',
         saved: 'Formations saved',
         savedDesc: 'A backup of the previous file was created automatically',
         fileChanged:
