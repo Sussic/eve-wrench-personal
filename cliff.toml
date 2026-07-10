@@ -6,11 +6,10 @@ header = ""
 body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | upper_first }}
-{% for commit in commits %}
+{% for commit in commits %}\
 - {{ commit.message | split(pat=": ") | last | trim | upper_first }}
-{% endfor %}
-{% endfor %}
-"""
+{% endfor %}\
+{% endfor %}"""
 trim = true
 footer = ""
 

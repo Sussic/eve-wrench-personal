@@ -19,22 +19,26 @@ jobs:
           fetch-depth: 0
 
       - name: Generate changelog
+        id: cliff
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: --unreleased --strip header
-          output: RELEASE_NOTES.md
 
       - name: Prepare notes output
         id: notes
         shell: bash
+        env:
+          CONTENT: ${{ steps.cliff.outputs.content }}
         run: |
-          if [ ! -s RELEASE_NOTES.md ]; then
-            echo "See the assets below to download and install EVE Wrench." > RELEASE_NOTES.md
+          notes="## What's Changed"$'\n\n'"$CONTENT"
+          # Fall back to a placeholder if there were no notable commits
+          if [ -z "$(printf '%s' "$CONTENT" | tr -d '[:space:]')" ]; then
+            notes="See the assets below to download and install EVE Wrench."
           fi
           {
             echo 'notes<<CHANGELOG_EOF'
-            cat RELEASE_NOTES.md
+            echo "$notes"
             echo CHANGELOG_EOF
           } >> "$GITHUB_OUTPUT"
 
