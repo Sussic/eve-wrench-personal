@@ -1,114 +1,172 @@
-# EVE Wrench
+<h1 align="center">EVE Wrench</h1>
 
 <p align="center">
-  <img src="src-tauri/icons/128x128.png" width="128" height="128" alt="EVE Wrench Logo">
+  <strong>A settings manager for EVE Online</strong><br>
+  Back up, restore, sync, and edit your account and character settings — safely.
 </p>
 
 <p align="center">
-  <strong>EVE Online Settings Manager</strong><br>
-  Backup, restore, and sync settings across accounts and characters
+  <img alt="CI" src="https://github.com/eve-wrench/eve-wrench-app/actions/workflows/ci.yml/badge.svg">
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/eve-wrench/eve-wrench-app?include_prereleases&sort=semver">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-informational">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
 ---
 
-<img width="1112" height="712" alt="app" src="https://github.com/user-attachments/assets/8ed5f561-79ad-4162-bea2-e1461e152975" />
+<img width="1112" height="712" alt="EVE Wrench" src="https://github.com/user-attachments/assets/8ed5f561-79ad-4162-bea2-e1461e152975" />
+
+## What it does
+
+EVE stores every account and character's UI settings — overview, window layout,
+probe formations, keybinds, and more — in local binary files. Managing those by
+hand means copying opaque `.dat` files around and hoping you didn't clobber
+something. EVE Wrench turns that into a safe, visual workflow.
+
+- **🔄 Sync** settings from one account or character to many — and choose exactly
+  which parts to copy
+- **💾 Back up & restore** any account or character, with automatic backups
+  before every change
+- **🛰️ Edit probe formations** in a dedicated 3D editor, with presets — no client
+  restart required
+- **🗂️ Export & import** your whole setup as a single portable archive
+- **🏷️ Identify** accounts and characters with ESI portraits and custom aliases
+- **🌐 Every server** — Tranquility, Singularity, Thunderdome, and Serenity
 
 ## ❤️ Standing on the shoulders of TrueBrain
 
-> **All of EVE Wrench's granular settings features exist because of
-> [TrueBrain](https://github.com/TrueBrain)'s work.** His
-> [blue-marshal-rs](https://github.com/TrueBrain/blue-marshal-rs) library is a
-> Rust implementation of EVE Online's `blue.Marshal` binary format — the thing
-> that makes `core_user_*.dat` and `core_char_*.dat` files readable and
-> writable at all. Building on CCP's previously published code, he worked out
-> how the format fits together and built a lossless decode/encode round trip;
-> EVE Wrench "just" puts a UI on top of it.
+> **Everything EVE Wrench does beyond copying whole files exists because of
+> [TrueBrain](https://github.com/TrueBrain).** His
+> [blue-marshal-rs](https://github.com/TrueBrain/blue-marshal-rs) is a Rust
+> implementation of EVE's `blue.Marshal` binary format — the thing that makes
+> `core_user_*.dat` and `core_char_*.dat` files readable and writable at all.
+> Building on CCP's previously published code, he worked out how the format fits
+> together and built a lossless decode/encode round trip.
 >
-> Everything beyond plain file copying — viewing file contents, the probe
-> formation editor, selective copying of individual setting groups — is powered
-> by his library. Thank you!
+> Selective copying, the probe formation editor, and reading individual settings
+> are all powered by his library. Thank you!
 
 ## Features
 
-### Settings Sync
+### 🔄 Settings sync
 
-Copy settings from one character or account to multiple targets with a single click. Select a source, add one or more targets, then hit copy. Perfect for:
+Pick a **source** account or character, add one or more **targets**, and copy in
+one click. Account settings only copy to accounts and character settings only to
+characters — the app enforces it.
 
-- Setting up new alts with your preferred overview, window layouts, and keybinds
-- Applying a "master" account's settings across all your accounts
-- Syncing characters across different settings profiles
+**Selective copy.** Everything is copied by default, but each setting group has a
+checkbox: **unchecked groups keep the target's own values.** So you can push your
+overview, window layout, and suppressed dialogs everywhere without wiping a
+character's hand-arranged module slots or typed search history.
 
-The app enforces type compatibility—account settings can only be copied to other accounts, character settings to other characters.
+| Account groups                                                                                                                                      | Character groups                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Overview profiles · Probe formations · Suppressed dialogs · Audio · Camera & graphics · Market & contracts · Module slot layout · Window tab groups | Window layout · Neocom sidebar · Chat channels · Info panels · Docked panels |
 
-#### Selective copy
+_(Search history & suggestions is available for both, off by default.)_
 
-The copy panel lets you choose _what_ to copy. Everything is copied by default, but unchecked groups keep the target's own settings — so you can sync your overview, window layouts, and suppressed dialogs everywhere without wiping a character's carefully arranged module slot layout or typed search history. Every target file is backed up automatically before a selective copy.
+Only the groups you select are touched — caches, per-station state, and edit
+history never migrate. Every target is backed up first.
 
-Available groups: overview profiles, probe formations, suppressed dialogs, audio, camera & graphics, market & contracts, module slot layout, window tab groups (accounts); window layout, Neocom sidebar, chat channels, info panels, docked panels (characters); search history & suggestions (both).
+### 💾 Backups
 
-### Probe Formation Editor
+- **Create** named backups from the ⋯ menu on any account or character
+- **Restore** a backup to its original entity, or **apply** it to any compatible one
+- **Bulk manage** in the Backups tab — sort by name or time, select multiple, and
+  delete in one action
+- **Automatic backups before changes** — toggle _"Back up before changes"_ in the
+  settings menu (on by default); it guards selective copies and formation edits
 
-Edit custom probe scanner formations without launching the client: open the ⋯ menu on any account and pick "Probe formations". The editor opens in its own window with a rotatable 3D preview (with distance rings and a north marker), per-probe coordinates in km, discrete scan-range selection, and one-click scaling of a whole formation. Saves re-encode the settings file losslessly and create a backup first.
+Backups live inside EVE's own settings folders, so they're easy to find and
+survive a reinstall of EVE Wrench.
 
-### View File Contents
+### 🛰️ Probe formation editor
 
-The ⋯ menu on any account or character can decode its settings file and show the full contents as JSON — useful for digging into what EVE actually stores.
+Open the ⋯ menu on any **account** → **Probe formations** to launch a dedicated
+editor window (with the same custom title bar as the main app).
 
-### Backup & Restore
+- **Presets** to start from: **Blank**, **Pinpoint**, **Drifter** (one probe
+  parked behind the Drifter), and a **Directional** set that stacks all 8 probes
+  along one axis — North, South, East, West, Up, Down
+- **Holographic 3D scanner** preview — drag to rotate, scroll to zoom anywhere in
+  the pane, with compass axes (N/S · W/E · U/D), range rings, and a height tether
+  under each probe. Theme-aware, light and dark
+- **Precise editing** — per-probe coordinates in km, discrete scan ranges
+  (0.25–32 AU), reorder formations, and scale a whole formation (a negative
+  factor shrinks it)
+- **Safe saves** — writes re-encode the file losslessly, back it up first, and
+  stay in sync live with the main window
 
-Create named backups before making changes. Each backup is timestamped and tied to its original account or character. Backups are stored directly in EVE's settings directory structure, making them easy to find and manage.
+### 🗂️ Import & export
 
-- **Create backups** from the ⋯ menu on any account or character
-- **Restore backups** to the original entity or apply them to any compatible target
-- **Manage backups** in the dedicated Backups tab—sort by name or time, delete old backups
+Export **all** your settings, backups, and aliases into a single `.zip` archive
+(with a checksummed manifest) to move between machines or share a setup. Importing
+analyzes the archive first — showing new, unchanged, and conflicting files — and
+lets you choose which conflicts to overwrite, backing up anything it replaces.
 
-### Cross-Server Support
+### 🏷️ Identity: portraits & aliases
 
-Works with all EVE servers:
+- For **Tranquility** and **Singularity** characters, names, portraits, and
+  corporations are pulled from EVE's **ESI** API (SISI mirrors TQ, so those
+  resolve too)
+- EVE doesn't store account names — only numeric IDs — so assign **aliases** to
+  tell accounts apart. Aliases also help on servers where ESI isn't available
+  (Thunderdome, Serenity). They're stored locally and persist
 
-| Server          | Description             |
-| --------------- | ----------------------- |
-| **Tranquility** | Main production server  |
-| **Singularity** | Public test server      |
-| **Thunderdome** | Tournament/event server |
-| **Serenity**    | Chinese server          |
+### 🌐 Cross-server support
 
-Each server's settings are completely separate. The app detects all installed servers automatically.
+| Server          | Description               |
+| --------------- | ------------------------- |
+| **Tranquility** | Main production server    |
+| **Singularity** | Public test server        |
+| **Thunderdome** | Tournament / event server |
+| **Serenity**    | Chinese server            |
 
-### Character & Account Info
+Each server's settings are separate; the app detects every installed server
+automatically.
 
-For Tranquility and Singularity characters, the app fetches data from EVE's ESI API:
+### ⚙️ Extras
 
-- Character names and portraits
-- Corporation names
-
-Since Singularity is a mirror of Tranquility, most character IDs exist on both servers—so SISI characters get names and portraits too. This makes it easy to identify characters at a glance instead of seeing raw character IDs.
-
-### Aliases
-
-EVE doesn't store account names in settings files—you only see numeric account IDs. EVE Wrench lets you assign custom aliases to accounts so you can tell them apart.
-
-For characters on servers where ESI doesn't work (Thunderdome, Serenity) or when a character can't be found via ESI, you can also set aliases to identify them. Aliases are stored locally and persist across sessions.
-
-### Extra Settings
-
-Some useful client settings aren't exposed in EVE's UI. EVE Wrench gives you access to:
-
-- **Always Show Bracket Text** — Display ship labels on all brackets in space, not just selected targets. Useful for PvP situational awareness. May impact performance in large fights (200+ pilots). Requires a client restart to take effect.
-
-### Auto-Update Notifications
-
-The app checks for new versions on GitHub at startup. When an update is available, a modal shows the version change and release notes with a direct link to download.
-
-Stable builds only ever see stable releases. Preview builds (versions with a pre-release suffix, marked with a "Preview" badge in the title bar) are also notified about newer previews.
+- **Always Show Bracket Text** — show ship labels on all brackets in space, not
+  just selected targets (handy for PvP awareness; may cost performance in 200+
+  pilot fights; needs a client restart)
+- **Update notifications** — the app checks GitHub at startup. Stable builds only
+  see stable releases; **preview builds** (a pre-release version, marked with a
+  _Preview_ badge in the title bar) are also told about newer previews
 
 ---
 
-## EVE Settings File Structure
+## Installation
 
-EVE Online stores all user settings locally. Understanding this structure helps you manage settings manually or troubleshoot issues.
+Grab the latest build from [**Releases**](https://github.com/eve-wrench/eve-wrench-app/releases).
 
-### Root Directory
+| OS          | File                          | Notes                                                        |
+| ----------- | ----------------------------- | ------------------------------------------------------------ |
+| **macOS**   | `.dmg`                        | Open and drag to Applications (Apple Silicon & Intel builds) |
+| **Windows** | `.msi` or `-setup.exe`        | Run the installer                                            |
+| **Linux**   | `.AppImage` / `.deb` / `.rpm` | `chmod +x eve-wrench_*.AppImage && ./eve-wrench_*.AppImage`  |
+
+## Quick start
+
+1. **Launch** — EVE Wrench scans for installations and lists every account and character
+2. **Pick a server** with the tabs at the top
+3. **Set a source** — the ↑ button on any row (or the ⋯ menu)
+4. **Add targets** — the ↓ button on compatible rows
+5. **Choose what to copy** in the right panel, then **Copy Settings**
+6. **Back up first** from the ⋯ menu whenever you want a manual safety net
+
+> **Tip:** Sort by name or modification time from the column headers, use
+> _"Add all"_ to target a whole profile, and give accounts aliases so you're not
+> staring at raw IDs.
+
+---
+
+## How EVE stores settings
+
+EVE keeps all settings locally. Understanding the layout helps with manual
+troubleshooting.
+
+**Root directory**
 
 | OS      | Path                                                                                                |
 | ------- | --------------------------------------------------------------------------------------------------- |
@@ -116,163 +174,53 @@ EVE Online stores all user settings locally. Understanding this structure helps 
 | Windows | `%LocalAppData%\CCP\EVE\`                                                                           |
 | Linux   | `~/.local/share/Steam/steamapps/compatdata/8500/pfx/drive_c/users/steamuser/AppData/Local/CCP/EVE/` |
 
-### Server Folders
-
-Inside the root, you'll find folders for each server you've connected to:
-
-```
-CCP/EVE/
-├── c_ccp_eve_online_tq_tranquility/
-├── c_ccp_eve_online_sisi_singularity/
-├── c_ccp_eve_online_tq_thunderdome/
-└── c_ccp_eve_online_cn_serenity/
-```
-
-The folder names encode the server identity. EVE Wrench parses these automatically.
-
-### Settings Files
-
-Inside each profile folder, you'll find the actual settings files:
+**Inside a profile folder**
 
 ```
 settings_Default/
-├── core_user_12345678.dat      # Account settings
-├── core_user_87654321.dat      # Another account
-├── core_char_90000001.dat      # Character settings
-├── core_char_90000002.dat      # Another character
-├── prefs.ini                   # Client preferences
+├── core_user_12345678.dat      # Account settings (window layout, overview, audio…)
+├── core_char_90000001.dat      # Character settings (chat, info panels, dscan…)
+├── prefs.ini                   # Client preferences (some not exposed in-game)
 └── backups/                    # EVE Wrench backups
-    ├── MyBackup_user_12345678_1703001234.bak
-    └── BeforeChanges_char_90000001_1703002345.bak
+    └── {name}_{user|char}_{id}_{timestamp}.bak
 ```
 
-#### Account Settings (`core_user_*.dat`)
-
-Binary files containing account-level settings:
-
-- Window positions and sizes
-- Overview settings and tab configurations
-- Audio settings
-- Keyboard shortcuts
-- UI scaling and font sizes
-- Notification preferences
-
-The numeric ID is your account ID (not character ID).
-
-#### Character Settings (`core_char_*.dat`)
-
-Binary files containing character-specific settings:
-
-- Drone settings
-- Autopilot preferences
-- Channel settings
-- D-scan presets
-- Some UI state
-
-The numeric ID is the character ID. Character IDs ≥ 90,000,000 are player characters; lower IDs are NPCs or legacy characters.
-
-#### Client Preferences (`prefs.ini`)
-
-A text file with client-wide settings like:
-
-```ini
-bracketsAlwaysShowShipText=1
-```
-
-Some settings in this file aren't exposed in EVE's UI but can significantly affect gameplay.
-
-#### Backups Folder
-
-EVE Wrench stores backups in a `backups/` subfolder within each profile. Backup filenames follow this pattern:
-
-```
-{name}_{type}_{id}_{timestamp}.bak
-```
-
-- **name**: The backup name you provided
-- **type**: `user` (account) or `char` (character)
-- **id**: The account or character ID
-- **timestamp**: Unix timestamp when the backup was created
-
----
-
-## Installation
-
-### macOS
-
-Download the latest `.dmg` from [Releases](https://github.com/eve-wrench/eve-wrench-app/releases), open it, and drag EVE Wrench to your Applications folder.
-
-### Windows
-
-Download the latest `.msi` installer from [Releases](https://github.com/eve-wrench/eve-wrench-app/releases) and run it.
-
-### Linux
-
-Download the latest `.AppImage` from [Releases](https://github.com/eve-wrench/eve-wrench-app/releases):
-
-```bash
-chmod +x eve-wrench_*.AppImage
-./eve-wrench_*.AppImage
-```
-
-## Usage
-
-1. **Launch EVE Wrench** — The app automatically scans for EVE installations and loads all accounts and characters
-2. **Browse servers** — Switch between servers using the tabs at the top
-3. **Set a source** — Click the upload icon (↑) on any account or character, or use the ⋯ menu
-4. **Add targets** — Click the download icon (↓) on compatible entries to add them as copy targets
-5. **Execute** — Click "Copy Settings" in the right panel to sync settings
-6. **Backups** — Use the ⋯ menu to create backups before making changes, or browse all backups in the Backups tab
-
-### Tips
-
-- Sort accounts/characters by name or modification time by clicking column headers
-- Use "Add all" to quickly select all accounts or characters in a profile as targets
-- Assign aliases to accounts via the ⋯ menu to tell them apart
-- Backups show which entity they came from, making it easy to find the right one
+`core_user_*` files are keyed by **account** ID; `core_char_*` by **character** ID
+(IDs ≥ 90,000,000 are player characters). These `.dat` files are `blue.Marshal`
+binary — which is exactly what blue-marshal-rs decodes.
 
 ---
 
 ## Development
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) 1.77+
-- [Tauri CLI](https://tauri.app/start/prerequisites/)
-
-### Setup
+**Prerequisites:** [Node.js](https://nodejs.org/) 18+, [Rust](https://rustup.rs/)
+stable, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for
+your OS.
 
 ```bash
 git clone https://github.com/eve-wrench/eve-wrench-app.git
-cd eve-wrench
-
+cd eve-wrench-app
 npm install
-
-npm run tauri dev
-
-npm run tauri build
+npm run tauri dev      # run in development
+npm run tauri build    # build a production bundle
 ```
 
-### Scripts
+**Scripts**
 
-| Command                | Description               |
-| ---------------------- | ------------------------- |
-| `npm run dev`          | Start Vite dev server     |
-| `npm run build`        | Type-check and build      |
-| `npm run tauri dev`    | Run Tauri in development  |
-| `npm run tauri build`  | Build production app      |
-| `npm run format`       | Format code with Prettier |
-| `npm run format:check` | Check formatting          |
-| `npm run lint`         | Lint with ESLint          |
+| Command                           | Description                                  |
+| --------------------------------- | -------------------------------------------- |
+| `npm run tauri dev`               | Run the app in development                   |
+| `npm run build`                   | Type-check and build the frontend            |
+| `npm run typecheck`               | Type-check only (`vue-tsc`)                  |
+| `npm run lint` / `lint:check`     | ESLint (fix / check)                         |
+| `npm run format` / `format:check` | Prettier (write / check)                     |
+| `npm run knip`                    | Find unused files, exports, and dependencies |
 
-## Tech Stack
+CI runs lint, type-check, knip, `cargo fmt`/`clippy -D warnings`/`test`, and a
+build on every push and PR.
 
-- **Frontend**: Vue 3, TypeScript, Tailwind CSS, shadcn-vue
-- **Backend**: Rust, Tauri 2
-- **Settings decoding**: [blue-marshal](https://github.com/TrueBrain/blue-marshal-rs) by TrueBrain
-- **APIs**: EVE ESI (character info)
-- **Icons**: Lucide
+**Tech stack:** Vue 3 · TypeScript · Tailwind CSS · shadcn-vue · Rust · Tauri 2 ·
+[blue-marshal](https://github.com/TrueBrain/blue-marshal-rs) · EVE ESI · Lucide.
 
 ## License
 
