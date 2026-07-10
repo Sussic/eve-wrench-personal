@@ -158,11 +158,11 @@ automatically.
 
 Grab the latest build from [**Releases**](https://github.com/eve-wrench/eve-wrench-app/releases).
 
-| OS          | File                          | Notes                                                        |
-| ----------- | ----------------------------- | ------------------------------------------------------------ |
-| **macOS**   | `.dmg`                        | Open and drag to Applications (Apple Silicon & Intel builds) |
-| **Windows** | `.msi` or `-setup.exe`        | Run the installer                                            |
-| **Linux**   | `.AppImage` / `.deb` / `.rpm` | `chmod +x eve-wrench_*.AppImage && ./eve-wrench_*.AppImage`  |
+| OS          | File                                    | Notes                                                                                                            |
+| ----------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **macOS**   | `.dmg`                                  | Open and drag to Applications (Apple Silicon & Intel builds)                                                     |
+| **Windows** | `.msi` / `-setup.exe` / `-portable.exe` | Run an installer, or the portable `.exe` (no install; needs the WebView2 runtime that ships with modern Windows) |
+| **Linux**   | `.AppImage` / `.deb` / `.rpm`           | `chmod +x eve-wrench_*.AppImage && ./eve-wrench_*.AppImage`                                                      |
 
 ## Quick start
 

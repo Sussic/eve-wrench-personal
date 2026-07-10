@@ -104,3 +104,18 @@ jobs:
           releaseDraft: true
           prerelease: ${{ steps.version.outputs.prerelease }}
           args: ${{ matrix.args }}
+
+      # The compiled binary is self-contained (the frontend is embedded), so
+      # ship it as a no-install portable build alongside the installers.
+      # Requires the WebView2 runtime, which ships with modern Windows.
+      - name: Upload portable Windows executable
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          exe=$(find src-tauri/target/release -maxdepth 1 -name '*.exe' | head -1)
+          dest="EVE-Wrench_${version}_x64-portable.exe"
+          cp "$exe" "$dest"
+          gh release upload "v${version}" "$dest" --clobber
