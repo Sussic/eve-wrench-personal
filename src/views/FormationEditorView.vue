@@ -20,6 +20,7 @@ import {
     ChevronDown,
     Sun,
     Moon,
+    Compass,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import {
@@ -588,6 +589,10 @@ function toggleTheme() {
                                         :key="preset.id"
                                         @select="addPreset(preset)"
                                     >
+                                        <component
+                                            :is="preset.icon"
+                                            class="mr-2 size-4"
+                                        />
                                         {{
                                             t(
                                                 `formationEditor.presets.${preset.id}`
@@ -596,8 +601,11 @@ function toggleTheme() {
                                     </DropdownMenuItem>
                                     <DropdownMenuSub>
                                         <DropdownMenuSubTrigger>
+                                            <Compass class="mr-2 size-4" />
                                             {{
-                                                t('formationEditor.presetStack')
+                                                t(
+                                                    'formationEditor.presetDirectional'
+                                                )
                                             }}
                                         </DropdownMenuSubTrigger>
                                         <DropdownMenuSubContent>
@@ -606,6 +614,10 @@ function toggleTheme() {
                                                 :key="preset.id"
                                                 @select="addPreset(preset)"
                                             >
+                                                <component
+                                                    :is="preset.icon"
+                                                    class="mr-2 size-4"
+                                                />
                                                 {{
                                                     t(
                                                         `formationEditor.presets.${preset.id}`
