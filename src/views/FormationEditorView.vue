@@ -778,7 +778,7 @@ function toggleTheme() {
                 </h1>
             </div>
             <div
-                class="pointer-events-none flex flex-1 items-center justify-end gap-1"
+                class="flex flex-1 items-center justify-end gap-1"
             >
                 <Button
                     variant="ghost"
