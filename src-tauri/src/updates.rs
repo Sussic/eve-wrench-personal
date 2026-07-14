@@ -1,7 +1,7 @@
 use crate::esi::CLIENT;
 use serde::Serialize;
 
-const GITHUB_REPO: &str = "eve-wrench/eve-wrench-app";
+const GITHUB_REPO: &str = "Sussic/eve-wrench-personal";
 
 #[derive(Serialize, Clone)]
 pub struct UpdateInfo {

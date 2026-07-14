@@ -105,6 +105,15 @@ export interface ProbeFormation {
     probes: FormationProbe[]
 }
 
+export interface FormationSnapshot {
+    formations: ProbeFormation[]
+    file_sha256: string
+}
+
+export interface FormationWriteResult {
+    file_sha256: string
+}
+
 export type SourceItem = SettingsEntry | BackupEntry
 
 export function isBackup(item: SourceItem): item is BackupEntry {

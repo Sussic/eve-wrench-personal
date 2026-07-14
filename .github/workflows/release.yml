@@ -34,7 +34,7 @@ jobs:
           notes="## What's Changed"$'\n\n'"$CONTENT"
           # Fall back to a placeholder if there were no notable commits
           if [ -z "$(printf '%s' "$CONTENT" | tr -d '[:space:]')" ]; then
-            notes="See the assets below to download and install EVE Wrench."
+            notes="See the assets below to download and install EVE Wrench Personal."
           fi
           {
             echo 'notes<<CHANGELOG_EOF'
@@ -99,7 +99,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: "EVE Wrench v__VERSION__"
+          releaseName: "EVE Wrench Personal v__VERSION__"
           releaseBody: ${{ needs.changelog.outputs.notes }}
           releaseDraft: true
           prerelease: ${{ steps.version.outputs.prerelease }}
@@ -116,6 +116,6 @@ jobs:
         run: |
           version=$(node -p "require('./src-tauri/tauri.conf.json').version")
           exe=$(find src-tauri/target/release -maxdepth 1 -name '*.exe' | head -1)
-          dest="EVE-Wrench_${version}_x64-portable.exe"
+          dest="EVE-Wrench-Personal_${version}_x64-portable.exe"
           cp "$exe" "$dest"
           gh release upload "v${version}" "$dest" --clobber

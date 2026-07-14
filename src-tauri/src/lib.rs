@@ -4,9 +4,9 @@ mod updates;
 
 use evesettings::{
     analyze_import, copy_settings, copy_settings_selective, create_backup, delete_backup,
-    delete_backups, execute_import, export_settings, get_app_data, get_entry_display_name,
-    open_formation_editor, read_probe_formations, set_alias, set_brackets_always_show,
-    write_probe_formations,
+    delete_backups, execute_import, export_probe_formation, export_settings, get_app_data,
+    get_entry_display_name, import_probe_formation, open_formation_editor, read_probe_formations,
+    set_alias, set_brackets_always_show, write_probe_formations,
 };
 use updates::{check_for_update, get_app_info};
 
@@ -21,6 +21,8 @@ pub fn run() {
             get_app_data,
             read_probe_formations,
             write_probe_formations,
+            import_probe_formation,
+            export_probe_formation,
             open_formation_editor,
             get_entry_display_name,
             create_backup,

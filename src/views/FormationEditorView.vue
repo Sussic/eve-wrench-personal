@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import 'vue-sonner/style.css'
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { open, save as saveFile } from '@tauri-apps/plugin-dialog'
 import { getAutoBackup } from '@/lib/settingsStore'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
@@ -21,6 +22,10 @@ import {
     Sun,
     Moon,
     Compass,
+    Download,
+    Upload,
+    Undo2,
+    Redo2,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import {
@@ -34,7 +39,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import WindowControls from '@/components/WindowControls.vue'
 import { useWindowChrome } from '@/composables/useWindowChrome'
-import type { FormationProbe, ProbeFormation } from '@/types'
+import type {
+    FormationProbe,
+    FormationSnapshot,
+    FormationWriteResult,
+    ProbeFormation,
+} from '@/types'
 import {
     FORMATION_PRESETS,
     STACK_PRESETS,
@@ -54,10 +64,13 @@ const props = defineProps<{
 
 const KM = 1000
 const AU = 149597870700
+const MAX_FORMATIONS = 10
+const MAX_PROBES = 8
+const RANGE_OPTIONS = [0.25, 0.5, 1, 2, 4, 8, 16, 32]
 
 // Edit state uses km for positions and AU for ranges; meters on the wire
 type EditProbe = FormationProbe
-type EditFormation = Omit<ProbeFormation, 'id'>
+type EditFormation = ProbeFormation
 type Axis = 'x' | 'y' | 'z'
 
 // EVE solarsystem coordinates (right-handed): +X West, +Y Up, +Z North.
@@ -82,8 +95,16 @@ const selected = ref(0)
 const scaleFactor = ref(2)
 const displayName = ref(props.entryName)
 const savedSnapshot = ref('')
+const savedFileHash = ref('')
 const diskChanged = ref(false)
+const undoStack = ref<string[]>([])
+const redoStack = ref<string[]>([])
 let unlisten: UnlistenFn | null = null
+let unlistenClose: UnlistenFn | null = null
+let diskPoll: ReturnType<typeof setInterval> | null = null
+let historyTimer: ReturnType<typeof setTimeout> | null = null
+let historySnapshot = ''
+let replayingHistory = false
 
 const current = computed<EditFormation | null>(
     () => formations.value[selected.value] ?? null
@@ -93,30 +114,86 @@ const dirty = computed(
     () => JSON.stringify(formations.value) !== savedSnapshot.value
 )
 
+const validationError = computed(() => {
+    if (formations.value.length > MAX_FORMATIONS)
+        return t('formationEditor.maxFormations')
+    for (const formation of formations.value) {
+        if (!formation.name.trim() || formation.name.trim().length > 64)
+            return t('formationEditor.invalidName')
+        if (formation.probes.length > MAX_PROBES)
+            return t('formationEditor.maxProbes')
+        for (const probe of formation.probes) {
+            if (
+                ![probe.x, probe.y, probe.z, probe.range].every(
+                    Number.isFinite
+                ) ||
+                !RANGE_OPTIONS.includes(probe.range)
+            )
+                return t('formationEditor.invalidProbe')
+        }
+    }
+    return ''
+})
+
+watch(
+    formations,
+    () => {
+        if (replayingHistory || loading.value) return
+        if (historyTimer) clearTimeout(historyTimer)
+        historyTimer = setTimeout(() => {
+            const next = JSON.stringify(formations.value)
+            if (next === historySnapshot) return
+            if (historySnapshot) {
+                undoStack.value.push(historySnapshot)
+                if (undoStack.value.length > 50) undoStack.value.shift()
+            }
+            historySnapshot = next
+            redoStack.value = []
+        }, 150)
+    },
+    { deep: true }
+)
+
 onMounted(async () => {
     await load()
     await refreshDisplayName()
     // The backend broadcasts data-changed to every window on any mutation
     unlisten = await listen('data-changed', onDataChanged)
+    unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
+        if (dirty.value && !window.confirm(t('formationEditor.closeUnsaved'))) {
+            event.preventDefault()
+        }
+    })
+    diskPoll = setInterval(checkDisk, 2500)
 })
 
 onUnmounted(() => {
     unlisten?.()
+    unlistenClose?.()
+    if (diskPoll) clearInterval(diskPoll)
+    if (historyTimer) clearTimeout(historyTimer)
 })
 
-async function readFormations(): Promise<EditFormation[]> {
-    const data = await invoke<ProbeFormation[]>('read_probe_formations', {
+async function readFormations(): Promise<{
+    formations: EditFormation[]
+    fileHash: string
+}> {
+    const data = await invoke<FormationSnapshot>('read_probe_formations', {
         filePath: props.filePath,
     })
-    return data.map((f) => ({
-        name: f.name,
-        probes: f.probes.map((p) => ({
-            x: p.x / KM,
-            y: p.y / KM,
-            z: p.z / KM,
-            range: p.range / AU,
+    return {
+        fileHash: data.file_sha256,
+        formations: data.formations.map((f) => ({
+            id: f.id,
+            name: f.name,
+            probes: f.probes.map((p) => ({
+                x: p.x / KM,
+                y: p.y / KM,
+                z: p.z / KM,
+                range: p.range / AU,
+            })),
         })),
-    }))
+    }
 }
 
 async function load() {
@@ -126,8 +203,13 @@ async function load() {
     selected.value = 0
     diskChanged.value = false
     try {
-        formations.value = await readFormations()
+        const disk = await readFormations()
+        formations.value = disk.formations
+        savedFileHash.value = disk.fileHash
         savedSnapshot.value = JSON.stringify(formations.value)
+        historySnapshot = savedSnapshot.value
+        undoStack.value = []
+        redoStack.value = []
     } catch (e) {
         loadError.value = String(e)
     } finally {
@@ -151,22 +233,31 @@ async function refreshDisplayName() {
 
 async function onDataChanged() {
     refreshDisplayName()
-    let disk: EditFormation[]
+    await checkDisk()
+}
+
+async function checkDisk() {
+    if (loading.value || saving.value) return
+    let disk: Awaited<ReturnType<typeof readFormations>>
     try {
         disk = await readFormations()
     } catch {
         return // file may be mid-write; a later event will catch up
     }
-    const diskJson = JSON.stringify(disk)
-    if (diskJson === savedSnapshot.value) {
+    if (disk.fileHash === savedFileHash.value) {
         return // our file wasn't what changed
     }
     if (dirty.value) {
         diskChanged.value = true // don't clobber unsaved edits
         return
     }
-    formations.value = disk
+    formations.value = disk.formations
+    savedFileHash.value = disk.fileHash
+    const diskJson = JSON.stringify(disk.formations)
     savedSnapshot.value = diskJson
+    historySnapshot = diskJson
+    undoStack.value = []
+    redoStack.value = []
     selected.value = Math.max(
         0,
         Math.min(selected.value, formations.value.length - 1)
@@ -174,10 +265,11 @@ async function onDataChanged() {
 }
 
 async function save() {
+    if (validationError.value) return
     saving.value = true
     try {
         const payload: ProbeFormation[] = formations.value.map((f, i) => ({
-            id: i,
+            id: f.id,
             name: f.name.trim() || `Formation ${i + 1}`,
             probes: f.probes.map((p) => ({
                 x: p.x * KM,
@@ -187,16 +279,22 @@ async function save() {
             })),
         }))
         // Respect the "back up before changes" setting (shared via the store)
-        await invoke('write_probe_formations', {
-            filePath: props.filePath,
-            formations: payload,
-            backup: await getAutoBackup(),
-        })
+        const result = await invoke<FormationWriteResult>(
+            'write_probe_formations',
+            {
+                filePath: props.filePath,
+                formations: payload,
+                backup: await getAutoBackup(),
+                expectedSha256: savedFileHash.value,
+            }
+        )
         // Normalize edit state to what a re-read would return
         formations.value.forEach((f, i) => {
             f.name = payload[i].name
         })
         savedSnapshot.value = JSON.stringify(formations.value)
+        savedFileHash.value = result.file_sha256
+        historySnapshot = savedSnapshot.value
         diskChanged.value = false
         toast.success(t('formationEditor.saved'), {
             description: t('formationEditor.savedDesc'),
@@ -213,24 +311,37 @@ async function save() {
 // Discard unsaved edits, reverting to the last saved state
 function reset() {
     formations.value = JSON.parse(savedSnapshot.value)
+    historySnapshot = savedSnapshot.value
+    undoStack.value = []
+    redoStack.value = []
     selected.value = Math.max(
         0,
         Math.min(selected.value, formations.value.length - 1)
     )
 }
 
+function nextFormationId() {
+    return formations.value.reduce((max, f) => Math.max(max, f.id), -1) + 1
+}
+
 function addPreset(preset: FormationPreset) {
+    if (formations.value.length >= MAX_FORMATIONS) return
     const name =
         preset.id === 'blank'
             ? `Formation ${formations.value.length + 1}`
             : t(`formationEditor.presets.${preset.id}`)
-    formations.value.push({ name, probes: preset.probes() })
+    formations.value.push({
+        id: nextFormationId(),
+        name,
+        probes: preset.probes(),
+    })
     selected.value = formations.value.length - 1
 }
 
 function duplicateFormation() {
-    if (!current.value) return
+    if (!current.value || formations.value.length >= MAX_FORMATIONS) return
     formations.value.push({
+        id: nextFormationId(),
         name: `${current.value.name} copy`,
         probes: current.value.probes.map((p) => ({ ...p })),
     })
@@ -252,9 +363,140 @@ function moveFormation(i: number, dir: -1 | 1) {
     else if (selected.value === j) selected.value = i
 }
 
+function flushHistory() {
+    if (historyTimer) clearTimeout(historyTimer)
+    const next = JSON.stringify(formations.value)
+    if (next !== historySnapshot) {
+        if (historySnapshot) undoStack.value.push(historySnapshot)
+        historySnapshot = next
+        redoStack.value = []
+    }
+}
+
+async function restoreHistory(snapshot: string) {
+    replayingHistory = true
+    formations.value = JSON.parse(snapshot)
+    historySnapshot = snapshot
+    selected.value = Math.max(
+        0,
+        Math.min(selected.value, formations.value.length - 1)
+    )
+    await nextTick()
+    replayingHistory = false
+}
+
+async function undo() {
+    flushHistory()
+    const previous = undoStack.value.pop()
+    if (!previous) return
+    redoStack.value.push(JSON.stringify(formations.value))
+    await restoreHistory(previous)
+}
+
+async function redo() {
+    const next = redoStack.value.pop()
+    if (!next) return
+    undoStack.value.push(JSON.stringify(formations.value))
+    await restoreHistory(next)
+}
+
+async function importFormation() {
+    if (formations.value.length >= MAX_FORMATIONS) return
+    const path = await open({
+        multiple: false,
+        filters: [{ name: 'Probe formation', extensions: ['json'] }],
+    })
+    if (typeof path !== 'string') return
+    try {
+        const imported = await invoke<ProbeFormation>(
+            'import_probe_formation',
+            {
+                importPath: path,
+            }
+        )
+        formations.value.push({
+            id: nextFormationId(),
+            name: imported.name,
+            probes: imported.probes.map((probe) => ({
+                x: probe.x / KM,
+                y: probe.y / KM,
+                z: probe.z / KM,
+                range: probe.range / AU,
+            })),
+        })
+        selected.value = formations.value.length - 1
+    } catch (e) {
+        toast.error(t('formationEditor.importFailed'), {
+            description: String(e),
+        })
+    }
+}
+
+async function exportFormation() {
+    if (!current.value) return
+    const safeName = current.value.name.replace(/[<>:"/\\|?*]/g, '_')
+    const path = await saveFile({
+        defaultPath: `${safeName || 'probe-formation'}.json`,
+        filters: [{ name: 'Probe formation', extensions: ['json'] }],
+    })
+    if (!path) return
+    try {
+        await invoke('export_probe_formation', {
+            exportPath: path,
+            formation: {
+                id: current.value.id,
+                name: current.value.name.trim(),
+                probes: current.value.probes.map((probe) => ({
+                    x: probe.x * KM,
+                    y: probe.y * KM,
+                    z: probe.z * KM,
+                    range: probe.range * AU,
+                })),
+            },
+        })
+        toast.success(t('formationEditor.exported'))
+    } catch (e) {
+        toast.error(t('formationEditor.exportFailed'), {
+            description: String(e),
+        })
+    }
+}
+
+function centreFormation() {
+    if (!current.value?.probes.length) return
+    const center = current.value.probes.reduce(
+        (sum, probe) => ({
+            x: sum.x + probe.x,
+            y: sum.y + probe.y,
+            z: sum.z + probe.z,
+        }),
+        { x: 0, y: 0, z: 0 }
+    )
+    const count = current.value.probes.length
+    for (const probe of current.value.probes) {
+        probe.x -= center.x / count
+        probe.y -= center.y / count
+        probe.z -= center.z / count
+    }
+}
+
+function mirrorFormation(axis: Axis) {
+    if (!current.value) return
+    for (const probe of current.value.probes) probe[axis] *= -1
+}
+
+function rotateFormation() {
+    if (!current.value) return
+    for (const probe of current.value.probes) {
+        const x = probe.x
+        probe.x = -probe.z
+        probe.z = x
+    }
+}
+
 // EVE probe launchers hold 8 probes, so formations are capped at 8
 function addProbe() {
-    if (!current.value || current.value.probes.length >= 8) return
+    if (!current.value || current.value.probes.length >= MAX_PROBES) return
     current.value.probes.push({ x: 0, y: 0, z: 0, range: 32 })
 }
 
@@ -280,8 +522,6 @@ function updateProbe(probe: EditProbe, key: keyof EditProbe, value: unknown) {
 }
 
 // Valid probe scan ranges in EVE: powers of two from 0.25 to 32 AU
-const RANGE_OPTIONS = [0.25, 0.5, 1, 2, 4, 8, 16, 32]
-
 function rangeOptionsFor(value: number): number[] {
     // Keep unusual values from existing files selectable instead of lying
     return RANGE_OPTIONS.includes(value)
@@ -303,6 +543,8 @@ const yaw = ref(0.6)
 const pitch = ref(0.4)
 const zoom = ref(1)
 let dragging = false
+let draggingProbe: number | null = null
+const selectedProbe = ref<number | null>(null)
 let lastX = 0
 let lastY = 0
 
@@ -320,7 +562,38 @@ function onPointerDown(e: PointerEvent) {
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
 }
 
+function onProbePointerDown(e: PointerEvent, index: number) {
+    draggingProbe = index
+    selectedProbe.value = index
+    lastX = e.clientX
+    lastY = e.clientY
+    setTextSelection(false)
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+}
+
 function onPointerMove(e: PointerEvent) {
+    if (draggingProbe !== null && current.value) {
+        const probe = current.value.probes[draggingProbe]
+        if (!probe) return
+        const rect = (e.currentTarget as Element).getBoundingClientRect()
+        const dx = ((e.clientX - lastX) * 400) / rect.width / previewScale.value
+        const dy =
+            ((e.clientY - lastY) * 400) / rect.height / previewScale.value
+
+        // Move in the camera plane while preserving depth, then invert the
+        // yaw/pitch projection back into EVE's X/Y/Z coordinates.
+        const camera = project(probe.x, probe.y, probe.z)
+        const x1 = camera.sx + dx
+        const y1 = -camera.sy - dy
+        const depth = camera.depth
+        const z1 = -y1 * Math.sin(pitch.value) + depth * Math.cos(pitch.value)
+        probe.y = y1 * Math.cos(pitch.value) + depth * Math.sin(pitch.value)
+        probe.x = x1 * Math.cos(yaw.value) - z1 * Math.sin(yaw.value)
+        probe.z = x1 * Math.sin(yaw.value) + z1 * Math.cos(yaw.value)
+        lastX = e.clientX
+        lastY = e.clientY
+        return
+    }
     if (!dragging) return
     yaw.value += (e.clientX - lastX) * 0.01
     pitch.value = Math.max(
@@ -333,6 +606,7 @@ function onPointerMove(e: PointerEvent) {
 
 function onPointerUp() {
     dragging = false
+    draggingProbe = null
     setTextSelection(true)
 }
 
@@ -571,11 +845,32 @@ function toggleTheme() {
                             {{ t('formationEditor.formations') }}
                         </span>
                         <div class="flex items-center gap-0.5">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                :disabled="formations.length >= MAX_FORMATIONS"
+                                :title="t('formationEditor.import')"
+                                @click="importFormation"
+                            >
+                                <Upload class="size-3.5" />
+                            </Button>
+                            <Button
+                                v-if="current"
+                                variant="ghost"
+                                size="icon"
+                                :title="t('formationEditor.export')"
+                                @click="exportFormation"
+                            >
+                                <Download class="size-3.5" />
+                            </Button>
                             <DropdownMenu>
                                 <DropdownMenuTrigger as-child>
                                     <Button
                                         variant="ghost"
                                         size="icon"
+                                        :disabled="
+                                            formations.length >= MAX_FORMATIONS
+                                        "
                                         :title="
                                             t('formationEditor.addFormation')
                                         "
@@ -632,6 +927,7 @@ function toggleTheme() {
                                 v-if="current"
                                 variant="ghost"
                                 size="icon"
+                                :disabled="formations.length >= MAX_FORMATIONS"
                                 :title="t('formationEditor.duplicate')"
                                 @click="duplicateFormation"
                             >
@@ -657,7 +953,7 @@ function toggleTheme() {
                     <div v-else class="flex flex-col gap-px">
                         <div
                             v-for="(f, i) in formations"
-                            :key="i"
+                            :key="f.id"
                             class="group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors"
                             :class="
                                 i === selected
@@ -676,6 +972,7 @@ function toggleTheme() {
                             />
                             <input
                                 v-model="f.name"
+                                maxlength="64"
                                 class="w-full min-w-0 bg-transparent text-sm outline-none"
                                 :class="
                                     i === selected
@@ -730,9 +1027,9 @@ function toggleTheme() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            :disabled="current.probes.length >= 8"
+                            :disabled="current.probes.length >= MAX_PROBES"
                             :title="
-                                current.probes.length >= 8
+                                current.probes.length >= MAX_PROBES
                                     ? t('formationEditor.maxProbes')
                                     : t('formationEditor.addProbe')
                             "
@@ -762,6 +1059,12 @@ function toggleTheme() {
                                 v-for="(p, i) in current.probes"
                                 :key="i"
                                 class="group grid grid-cols-[1.25rem_1fr_1fr_1fr_4.5rem_1.5rem] items-center gap-1"
+                                :class="
+                                    selectedProbe === i
+                                        ? 'rounded bg-primary/5'
+                                        : ''
+                                "
+                                @click="selectedProbe = i"
                             >
                                 <span
                                     class="font-mono text-[10px] tabular-nums text-muted-foreground"
@@ -813,6 +1116,40 @@ function toggleTheme() {
                 </section>
 
                 <!-- Tools -->
+                <section
+                    v-if="current"
+                    class="flex flex-wrap items-center gap-1 border-t px-4 py-2"
+                >
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        class="h-7"
+                        @click="centreFormation"
+                    >
+                        {{ t('formationEditor.centre') }}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        class="h-7"
+                        @click="rotateFormation"
+                    >
+                        {{ t('formationEditor.rotate') }}
+                    </Button>
+                    <Button
+                        v-for="axis in AXES"
+                        :key="`mirror-${axis.key}`"
+                        variant="outline"
+                        size="sm"
+                        class="h-7"
+                        @click="mirrorFormation(axis.key)"
+                    >
+                        {{ t('formationEditor.mirror') }} {{ axis.pos }}/{{
+                            axis.neg
+                        }}
+                    </Button>
+                </section>
+
                 <section
                     v-if="current"
                     class="flex items-center gap-3 border-t px-4 py-2.5"
@@ -870,6 +1207,24 @@ function toggleTheme() {
                 <!-- Actions footer -->
                 <div class="flex items-center gap-3 border-t px-4 py-3">
                     <Button
+                        variant="ghost"
+                        size="icon"
+                        :disabled="!undoStack.length"
+                        :title="t('formationEditor.undo')"
+                        @click="undo"
+                    >
+                        <Undo2 class="size-4" />
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        :disabled="!redoStack.length"
+                        :title="t('formationEditor.redo')"
+                        @click="redo"
+                    >
+                        <Redo2 class="size-4" />
+                    </Button>
+                    <Button
                         variant="outline"
                         size="sm"
                         :disabled="saving || !dirty"
@@ -878,7 +1233,13 @@ function toggleTheme() {
                         {{ t('formationEditor.reset') }}
                     </Button>
                     <span
-                        v-if="dirty"
+                        v-if="validationError"
+                        class="text-[11px] text-destructive"
+                    >
+                        {{ validationError }}
+                    </span>
+                    <span
+                        v-else-if="dirty"
                         class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
                     >
                         <span class="size-1.5 rounded-full bg-amber-400" />
@@ -887,7 +1248,9 @@ function toggleTheme() {
                     <Button
                         size="sm"
                         class="ml-auto min-w-28"
-                        :disabled="saving || !dirty"
+                        :disabled="
+                            saving || !dirty || !!validationError || diskChanged
+                        "
                         @click="save"
                     >
                         {{ t('formationEditor.save') }}
@@ -1045,8 +1408,16 @@ function toggleTheme() {
                             :cx="p.x"
                             :cy="p.y"
                             :r="4.5 + p.depth / extent"
-                            fill="#ffffff"
+                            :fill="
+                                selectedProbe === p.index
+                                    ? 'hsl(var(--primary))'
+                                    : '#ffffff'
+                            "
+                            class="cursor-move"
                             filter="url(#probe-shadow)"
+                            @pointerdown.stop="
+                                onProbePointerDown($event, p.index)
+                            "
                         >
                             <title>
                                 #{{ p.index + 1 }}: ({{ p.probe.x }},
@@ -1066,7 +1437,12 @@ function toggleTheme() {
                     >
                         {{ current?.name }}
                     </span>
-                    <span>{{ current?.probes.length ?? 0 }}/8 probes</span>
+                    <span
+                        >{{ current?.probes.length ?? 0 }}/{{
+                            MAX_PROBES
+                        }}
+                        probes</span
+                    >
                     <span
                         >{{ t('formationEditor.zoom') }}
                         {{ Math.round(zoom * 100) }}%</span

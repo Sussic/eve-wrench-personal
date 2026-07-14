@@ -367,6 +367,7 @@ export function useCopyManager() {
             await invoke<number>('copy_settings', {
                 sourcePath: backup.path,
                 targetPaths: [entry.path],
+                backup: autoBackup.value,
             })
             toast.success(t('toast.backupRestored'), {
                 description: t('toast.backupRestoredDesc', {
@@ -394,6 +395,7 @@ export function useCopyManager() {
             await invoke<number>('copy_settings', {
                 sourcePath: backup.path,
                 targetPaths: [target.path],
+                backup: autoBackup.value,
             })
             toast.success(t('toast.backupApplied'), {
                 description: t('toast.backupAppliedDesc', {

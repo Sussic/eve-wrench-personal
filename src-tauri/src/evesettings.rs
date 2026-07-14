@@ -1,10 +1,10 @@
 use crate::esi;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::fs;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 use zip::write::SimpleFileOptions;
@@ -12,6 +12,106 @@ use zip::ZipArchive;
 
 fn emit_data_changed(app: &tauri::AppHandle) {
     let _ = app.emit("data-changed", ());
+}
+
+fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("eve-wrench");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_path = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        file_name,
+        std::process::id(),
+        nonce
+    ));
+    let result = (|| -> Result<(), String> {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+        temp.write_all(data)
+            .map_err(|e| format!("Failed to write temporary file: {}", e))?;
+        temp.sync_all()
+            .map_err(|e| format!("Failed to flush temporary file: {}", e))?;
+        drop(temp);
+        replace_file(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(temp_path: &Path, destination: &Path) -> Result<(), String> {
+    fs::rename(temp_path, destination).map_err(|e| {
+        format!(
+            "Failed to replace {} atomically: {}",
+            destination.display(),
+            e
+        )
+    })?;
+    if let Some(parent) = destination.parent() {
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(temp_path: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    if !destination.exists() {
+        return fs::rename(temp_path, destination)
+            .map_err(|e| format!("Failed to install {}: {}", destination.display(), e));
+    }
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let temp_wide: Vec<u16> = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let replaced = unsafe {
+        ReplaceFileW(
+            destination_wide.as_ptr(),
+            temp_wide.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        return Err(format!(
+            "Failed to replace {} atomically: {}",
+            destination.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Copy)]
@@ -200,17 +300,73 @@ fn parse_core_filename(path: &Path) -> Result<(&str, &str), String> {
 // up in the app's backup list. Returns the backup path and its timestamp.
 fn auto_backup(path: &Path, name: &str) -> Result<(PathBuf, u64), String> {
     let (kind_str, id) = parse_core_filename(path)?;
+    let safe_name: String = name
+        .chars()
+        .take(80)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches([' ', '.'])
+        .to_string();
+    let safe_name = if safe_name.is_empty() {
+        "backup".to_string()
+    } else {
+        safe_name
+    };
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_secs();
-    let backup_filename = format!("{}_{}_{}_{}.bak", name, kind_str, id, timestamp);
-
     let backup_dir = backup_directory_for_path(path)?;
-    let dest = backup_dir.join(&backup_filename);
+    let dest = (0..1000)
+        .map(|suffix| {
+            let label = if suffix == 0 {
+                safe_name.clone()
+            } else {
+                format!("{} ({})", safe_name, suffix + 1)
+            };
+            backup_dir.join(format!("{}_{}_{}_{}.bak", label, kind_str, id, timestamp))
+        })
+        .find(|candidate| !candidate.exists())
+        .ok_or("Could not allocate a unique backup name")?;
     fs::copy(path, &dest).map_err(|e| e.to_string())?;
+    if safe_name.starts_with("pre-") {
+        prune_automatic_backups(&backup_dir, kind_str, id, 25);
+    }
     Ok((dest, timestamp))
+}
+
+fn prune_automatic_backups(directory: &Path, kind: &str, id: &str, keep: usize) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    let mut candidates: Vec<(u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let filename = path.file_name()?.to_str()?;
+            let stem = filename.strip_suffix(".bak")?;
+            let parts: Vec<&str> = stem.rsplitn(4, '_').collect();
+            if parts.len() != 4
+                || parts[2] != kind
+                || parts[1] != id
+                || !parts[3].starts_with("pre-")
+            {
+                return None;
+            }
+            Some((parts[0].parse().unwrap_or(0), path))
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.cmp(a));
+    for (_, path) in candidates.into_iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn aliases_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -235,7 +391,7 @@ fn load_aliases(app: &tauri::AppHandle) -> HashMap<String, String> {
 fn save_aliases(app: &tauri::AppHandle, aliases: &HashMap<String, String>) -> Result<(), String> {
     let path = aliases_file(app)?;
     let content = serde_json::to_string_pretty(aliases).map_err(|e| e.to_string())?;
-    fs::write(&path, content).map_err(|e| e.to_string())?;
+    atomic_write(&path, content.as_bytes())?;
     Ok(())
 }
 
@@ -303,7 +459,7 @@ fn write_brackets_setting(server_path: &PathBuf, enabled: bool) -> Result<(), St
                 setting_line.clone()
             };
 
-            fs::write(&prefs_path, content).map_err(|e| e.to_string())?;
+            atomic_write(&prefs_path, content.as_bytes())?;
         }
     }
     Ok(())
@@ -686,7 +842,7 @@ pub async fn get_app_data(
 // as (timestamp, {id: (name, [((x, y, z), range), ...])}). Every leaf setting is
 // wrapped in a (FILETIME timestamp, value) tuple; positions and ranges are meters.
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct FormationProbe {
     pub x: f64,
     pub y: f64,
@@ -694,16 +850,44 @@ pub struct FormationProbe {
     pub range: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProbeFormation {
     pub id: i64,
     pub name: String,
     pub probes: Vec<FormationProbe>,
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct FormationSnapshot {
+    pub formations: Vec<ProbeFormation>,
+    pub file_sha256: String,
+}
+#[derive(Serialize, Debug, Clone)]
+pub struct FormationWriteResult {
+    pub file_sha256: String,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PortableFormation {
+    pub schema_version: u32,
+    pub name: String,
+    pub probes: Vec<PortableProbe>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PortableProbe {
+    pub x_km: f64,
+    pub y_km: f64,
+    pub z_km: f64,
+    pub range_au: f64,
+}
+
 const UI_KEY: &str = "bytes:ui";
 const FORMATIONS_KEY: &str = "bytes:probescanning.customFormations";
 const SELECTED_FORMATION_KEY: &str = "bytes:probescanning.selectedFormationID";
+const AU_METERS: f64 = 149_597_870_700.0;
+const MAX_CUSTOM_FORMATIONS: usize = 10;
+const MAX_PROBES_PER_FORMATION: usize = 8;
+const MAX_FORMATION_NAME_CHARS: usize = 64;
+const VALID_SCAN_RANGES_AU: [f64; 8] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
 
 // Windows FILETIME: 100ns intervals since 1601-01-01, which is what EVE
 // stamps on every settings value.
@@ -717,9 +901,70 @@ fn filetime_now() -> u64 {
 
 fn load_settings_json(path: &Path) -> Result<(serde_json::Value, bool), String> {
     let bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let decoded = blue_marshal::decode(&bytes)
+    decode_settings_json(&bytes)
+}
+
+fn decode_settings_json(bytes: &[u8]) -> Result<(serde_json::Value, bool), String> {
+    let decoded = blue_marshal::decode(bytes)
         .map_err(|e| format!("Failed to decode settings file: {}", e))?;
     Ok((blue_marshal::to_json(&decoded.value), decoded.had_crc))
+}
+
+fn validate_formations(formations: &[ProbeFormation]) -> Result<(), String> {
+    if formations.len() > MAX_CUSTOM_FORMATIONS {
+        return Err(format!(
+            "EVE supports at most {} custom probe formations",
+            MAX_CUSTOM_FORMATIONS
+        ));
+    }
+    let mut ids = HashSet::new();
+    for (formation_index, formation) in formations.iter().enumerate() {
+        if formation.id < 0 || !ids.insert(formation.id) {
+            return Err(format!(
+                "Formation {} has an invalid or duplicate id",
+                formation_index + 1
+            ));
+        }
+        let name = formation.name.trim();
+        if name.is_empty() || name.chars().count() > MAX_FORMATION_NAME_CHARS {
+            return Err(format!(
+                "Formation {} needs a name between 1 and {} characters",
+                formation_index + 1,
+                MAX_FORMATION_NAME_CHARS
+            ));
+        }
+        if formation.probes.len() > MAX_PROBES_PER_FORMATION {
+            return Err(format!(
+                "Formation '{}' has more than {} probes",
+                name, MAX_PROBES_PER_FORMATION
+            ));
+        }
+        for (probe_index, probe) in formation.probes.iter().enumerate() {
+            if !probe.x.is_finite()
+                || !probe.y.is_finite()
+                || !probe.z.is_finite()
+                || !probe.range.is_finite()
+            {
+                return Err(format!(
+                    "Probe {} in '{}' contains a non-finite value",
+                    probe_index + 1,
+                    name
+                ));
+            }
+            let range_au = probe.range / AU_METERS;
+            if !VALID_SCAN_RANGES_AU
+                .iter()
+                .any(|valid| (range_au - valid).abs() <= 1e-9)
+            {
+                return Err(format!(
+                    "Probe {} in '{}' has an unsupported scan range",
+                    probe_index + 1,
+                    name
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 // Strips blue-marshal's lossless type prefix ("utf8:lol" -> "lol").
@@ -855,13 +1100,29 @@ fn formations_into_settings(
     Ok(())
 }
 
-fn read_formations_from_file(path: &Path) -> Result<Vec<ProbeFormation>, String> {
-    let (json, _) = load_settings_json(path)?;
-    Ok(formations_from_settings(&json))
+fn read_formations_from_file(path: &Path) -> Result<FormationSnapshot, String> {
+    let bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let (json, _) = decode_settings_json(&bytes)?;
+    Ok(FormationSnapshot {
+        formations: formations_from_settings(&json),
+        file_sha256: sha256_hex(&bytes),
+    })
 }
 
-fn write_formations_to_file(path: &Path, formations: &[ProbeFormation]) -> Result<(), String> {
-    let (mut json, had_crc) = load_settings_json(path)?;
+fn write_formations_to_file(
+    path: &Path,
+    formations: &[ProbeFormation],
+    expected_sha256: Option<&str>,
+) -> Result<String, String> {
+    validate_formations(formations)?;
+    let current_bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let current_sha256 = sha256_hex(&current_bytes);
+    if expected_sha256.is_some_and(|expected| expected != current_sha256) {
+        return Err(
+            "Settings file changed on disk. Reload it before saving your formations.".into(),
+        );
+    }
+    let (mut json, had_crc) = decode_settings_json(&current_bytes)?;
     formations_into_settings(&mut json, formations)?;
 
     let value = blue_marshal::from_json(&json)
@@ -873,8 +1134,14 @@ fn write_formations_to_file(path: &Path, formations: &[ProbeFormation]) -> Resul
     let bytes = blue_marshal::encode(&value, &options)
         .map_err(|e| format!("Failed to encode settings file: {}", e))?;
 
-    fs::write(path, bytes).map_err(|e| format!("Failed to write settings file: {}", e))?;
-    Ok(())
+    let latest_bytes = fs::read(path).map_err(|e| format!("Failed to re-read file: {}", e))?;
+    if sha256_hex(&latest_bytes) != current_sha256 {
+        return Err(
+            "Settings file changed on disk while saving. Reload it before trying again.".into(),
+        );
+    }
+    atomic_write(path, &bytes)?;
+    Ok(sha256_hex(&bytes))
 }
 
 fn percent_encode(s: &str) -> String {
@@ -1013,22 +1280,39 @@ fn find_section_key(root: &serde_json::Map<String, serde_json::Value>, section: 
         .unwrap_or_else(|| format!("bytes:{}", section))
 }
 
-// The copy starts as a full clone of the source; excluded groups are then
-// restored to exactly what the target had, so everything not explicitly
-// opted out — including keys no group covers — behaves like a normal copy.
-fn preserve_excluded_groups(
+const USER_COPY_GROUPS: [&str; 9] = [
+    "overview",
+    "probes",
+    "suppress",
+    "audio",
+    "camera_graphics",
+    "market",
+    "slots",
+    "tabgroups",
+    "search_history",
+];
+const CHAR_COPY_GROUPS: [&str; 6] = [
+    "windows",
+    "neocom",
+    "chat",
+    "infopanels",
+    "dockpanels",
+    "search_history",
+];
+
+fn copy_selected_groups(
     result: &mut serde_json::Value,
-    target: &serde_json::Value,
-    excluded_groups: &[String],
+    source: &serde_json::Value,
+    included_groups: &[&str],
 ) -> Result<(), String> {
     let result_map = result
         .as_object_mut()
-        .ok_or("Source file has an unexpected structure")?;
-    let target_map = target
-        .as_object()
         .ok_or("Target file has an unexpected structure")?;
+    let source_map = source
+        .as_object()
+        .ok_or("Source file has an unexpected structure")?;
 
-    for group in excluded_groups {
+    for group in included_groups {
         let Some(rule) = group_rule(group) else {
             continue;
         };
@@ -1037,17 +1321,17 @@ fn preserve_excluded_groups(
                 for section in sections {
                     let key = find_section_key(result_map, section);
                     result_map.remove(&key);
-                    let target_key = find_section_key(target_map, section);
-                    if let Some(value) = target_map.get(&target_key) {
-                        result_map.insert(target_key, value.clone());
+                    let source_key = find_section_key(source_map, section);
+                    if let Some(value) = source_map.get(&source_key) {
+                        result_map.insert(source_key, value.clone());
                     }
                 }
             }
             GroupRule::UiPrefixes(prefixes) => {
                 let ui_key = find_section_key(result_map, "ui");
                 let empty = serde_json::Map::new();
-                let target_ui = target_map
-                    .get(&find_section_key(target_map, "ui"))
+                let source_ui = source_map
+                    .get(&find_section_key(source_map, "ui"))
                     .and_then(|v| v.as_object())
                     .unwrap_or(&empty);
 
@@ -1059,7 +1343,7 @@ fn preserve_excluded_groups(
                 };
 
                 result_ui.retain(|k, _| !key_matches(k, prefixes));
-                for (k, v) in target_ui {
+                for (k, v) in source_ui {
                     if key_matches(k, prefixes) {
                         result_ui.insert(k.clone(), v.clone());
                     }
@@ -1083,7 +1367,20 @@ pub fn copy_settings_selective(
 
     let backup = backup.unwrap_or(true);
 
-    let (source_json, _) = load_settings_json(Path::new(&source_path))?;
+    let source = Path::new(&source_path);
+    let (kind, _) = parse_core_filename(source)?;
+    let available_groups: &[&str] = match kind {
+        "user" => &USER_COPY_GROUPS,
+        "char" => &CHAR_COPY_GROUPS,
+        _ => return Err("Unsupported settings file kind".into()),
+    };
+    let excluded: HashSet<&str> = excluded_groups.iter().map(String::as_str).collect();
+    let included: Vec<&str> = available_groups
+        .iter()
+        .copied()
+        .filter(|group| !excluded.contains(group))
+        .collect();
+    let (source_json, _) = load_settings_json(source)?;
     let mut success_count = 0u32;
     let now = FileTime::now();
 
@@ -1096,8 +1393,8 @@ pub fn copy_settings_selective(
             continue;
         };
 
-        let mut result = source_json.clone();
-        if preserve_excluded_groups(&mut result, &target_json, &excluded_groups).is_err() {
+        let mut result = target_json.clone();
+        if copy_selected_groups(&mut result, &source_json, &included).is_err() {
             continue;
         }
 
@@ -1116,7 +1413,7 @@ pub fn copy_settings_selective(
         if backup && auto_backup(path, "pre-selective-copy").is_err() {
             continue;
         }
-        if fs::write(path, bytes).is_ok() {
+        if atomic_write(path, &bytes).is_ok() {
             let _ = filetime::set_file_mtime(path, now);
             success_count += 1;
         }
@@ -1140,7 +1437,7 @@ pub fn get_entry_display_name(app: tauri::AppHandle, file_path: String) -> Resul
 }
 
 #[tauri::command]
-pub fn read_probe_formations(file_path: String) -> Result<Vec<ProbeFormation>, String> {
+pub fn read_probe_formations(file_path: String) -> Result<FormationSnapshot, String> {
     read_formations_from_file(Path::new(&file_path))
 }
 
@@ -1150,19 +1447,92 @@ pub fn write_probe_formations(
     file_path: String,
     formations: Vec<ProbeFormation>,
     backup: Option<bool>,
-) -> Result<(), String> {
+    expected_sha256: Option<String>,
+) -> Result<FormationWriteResult, String> {
     let path = Path::new(&file_path);
     if !path.exists() {
         return Err("Settings file does not exist".into());
     }
 
+    let current_bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    if expected_sha256
+        .as_deref()
+        .is_some_and(|expected| expected != sha256_hex(&current_bytes))
+    {
+        return Err(
+            "Settings file changed on disk. Reload it before saving your formations.".into(),
+        );
+    }
+    validate_formations(&formations)?;
     if backup.unwrap_or(true) {
         auto_backup(path, "pre-formation-edit")?;
     }
-    write_formations_to_file(path, &formations)?;
+    let file_sha256 = write_formations_to_file(path, &formations, expected_sha256.as_deref())?;
 
     emit_data_changed(&app);
-    Ok(())
+    Ok(FormationWriteResult { file_sha256 })
+}
+
+#[tauri::command]
+pub fn export_probe_formation(
+    export_path: String,
+    formation: ProbeFormation,
+) -> Result<(), String> {
+    validate_formations(std::slice::from_ref(&formation))?;
+    let portable = PortableFormation {
+        schema_version: 1,
+        name: formation.name,
+        probes: formation
+            .probes
+            .into_iter()
+            .map(|p| PortableProbe {
+                x_km: p.x / 1000.0,
+                y_km: p.y / 1000.0,
+                z_km: p.z / 1000.0,
+                range_au: p.range / AU_METERS,
+            })
+            .collect(),
+    };
+    let data = serde_json::to_vec_pretty(&portable)
+        .map_err(|e| format!("Failed to serialize formation: {}", e))?;
+    atomic_write(Path::new(&export_path), &data)
+}
+
+#[tauri::command]
+pub fn import_probe_formation(import_path: String) -> Result<ProbeFormation, String> {
+    let path = Path::new(&import_path);
+    if fs::metadata(path)
+        .map_err(|e| format!("Failed to open formation: {}", e))?
+        .len()
+        > 1024 * 1024
+    {
+        return Err("Formation JSON is larger than 1 MiB".into());
+    }
+    let data = fs::read(path).map_err(|e| format!("Failed to read formation: {}", e))?;
+    let portable: PortableFormation =
+        serde_json::from_slice(&data).map_err(|e| format!("Invalid formation JSON: {}", e))?;
+    if portable.schema_version != 1 {
+        return Err(format!(
+            "Unsupported formation schema version {}",
+            portable.schema_version
+        ));
+    }
+    let formation = ProbeFormation {
+        id: 0,
+        name: portable.name,
+        probes: portable
+            .probes
+            .into_iter()
+            .map(|p| FormationProbe {
+                x: p.x_km * 1000.0,
+                y: p.y_km * 1000.0,
+                z: p.z_km * 1000.0,
+                range: p.range_au * AU_METERS,
+            })
+            .collect(),
+    };
+    validate_formations(std::slice::from_ref(&formation))?;
+    Ok(formation)
 }
 
 #[cfg(test)]
@@ -1212,12 +1582,15 @@ mod formation_tests {
         let bytes = blue_marshal::encode(&value, &blue_marshal::EncodeOptions::default()).unwrap();
         fs::write(&path, bytes).unwrap();
 
-        assert!(read_formations_from_file(&path).unwrap().is_empty());
+        assert!(read_formations_from_file(&path)
+            .unwrap()
+            .formations
+            .is_empty());
 
         let formations = sample_formations();
-        write_formations_to_file(&path, &formations).unwrap();
+        write_formations_to_file(&path, &formations, None).unwrap();
 
-        let read_back = read_formations_from_file(&path).unwrap();
+        let read_back = read_formations_from_file(&path).unwrap().formations;
         assert_eq!(read_back.len(), 1);
         assert_eq!(read_back[0].name, "pinpoint");
         assert_eq!(read_back[0].probes.len(), 2);
@@ -1253,7 +1626,7 @@ mod formation_tests {
     }
 
     #[test]
-    fn selective_copy_preserves_only_excluded_groups() {
+    fn selective_copy_copies_only_selected_groups() {
         let source = json!({
             "bytes:overview": {
                 "bytes:shipLabels": {"tuple": ["long:1", "utf8:source-labels"]},
@@ -1276,8 +1649,8 @@ mod formation_tests {
             },
         });
 
-        let mut result = source.clone();
-        preserve_excluded_groups(&mut result, &target, &["slots".to_string()]).unwrap();
+        let mut result = target.clone();
+        copy_selected_groups(&mut result, &source, &["overview", "probes"]).unwrap();
 
         let ui = result.get("bytes:ui").unwrap();
         // Not excluded: mapped and unmapped keys alike come from source
@@ -1291,7 +1664,7 @@ mod formation_tests {
             .contains_key("int:0"));
         assert_eq!(
             ui["bytes:someUnmappedKey"]["tuple"][1],
-            json!("utf8:source-unmapped")
+            json!("utf8:target-unmapped")
         );
         // Excluded: slot layout keeps exactly what the target had, including
         // keys the source does not have at all
@@ -1379,6 +1752,7 @@ pub fn copy_settings(
     app: tauri::AppHandle,
     source_path: String,
     target_paths: Vec<String>,
+    backup: Option<bool>,
 ) -> Result<u32, String> {
     use filetime::FileTime;
 
@@ -1398,7 +1772,13 @@ pub fn copy_settings(
             continue;
         }
 
-        if fs::copy(&src, &dest).is_ok() {
+        if backup.unwrap_or(true) && auto_backup(&dest, "pre-restore").is_err() {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&src) else {
+            continue;
+        };
+        if atomic_write(&dest, &bytes).is_ok() {
             let _ = filetime::set_file_mtime(&dest, now);
             success_count += 1;
         }
@@ -1494,9 +1874,97 @@ pub struct ImportResultInfo {
 }
 
 fn sha256_of_bytes(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    sha256_hex(data)
+}
+
+const MAX_IMPORT_FILES: usize = 10_000;
+const MAX_IMPORT_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn normalize_manifest_path(raw: &str) -> Result<(String, PathBuf), String> {
+    let normalized = raw.replace('\\', "/");
+    if normalized == "aliases.json" {
+        return Ok((normalized, PathBuf::from("aliases.json")));
+    }
+    let mut parts = Vec::new();
+    for component in Path::new(&normalized).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            _ => return Err(format!("Unsafe archive path: {}", raw)),
+        }
+    }
+    let valid = match parts.as_slice() {
+        [_, profile, file]
+            if profile.starts_with("settings_")
+                && (file == "prefs.ini"
+                    || (file.starts_with("core_") && file.ends_with(".dat"))) =>
+        {
+            true
+        }
+        [_, profile, backups, file]
+            if profile.starts_with("settings_")
+                && backups == "backups"
+                && file.ends_with(".bak") =>
+        {
+            true
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err(format!("Unsupported archive path: {}", raw));
+    }
+    Ok((parts.join("/"), parts.iter().collect()))
+}
+
+fn validate_manifest(manifest: &ExportManifest) -> Result<(), String> {
+    if manifest.files.len() > MAX_IMPORT_FILES {
+        return Err(format!(
+            "Archive contains more than {} files",
+            MAX_IMPORT_FILES
+        ));
+    }
+    let mut paths = HashSet::new();
+    for entry in &manifest.files {
+        let (normalized, _) = normalize_manifest_path(&entry.relative_path)?;
+        if !paths.insert(normalized) {
+            return Err(format!(
+                "Archive manifest contains duplicate path {}",
+                entry.relative_path
+            ));
+        }
+        if entry.sha256.len() != 64 || !entry.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!(
+                "Archive manifest has an invalid checksum for {}",
+                entry.relative_path
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn read_verified_archive_entry<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    entry: &ManifestFileEntry,
+) -> Result<Vec<u8>, String> {
+    let mut file = archive
+        .by_name(&entry.relative_path)
+        .map_err(|_| format!("Archive is missing {}", entry.relative_path))?;
+    if file.size() > MAX_IMPORT_FILE_BYTES {
+        return Err(format!(
+            "{} is larger than the {} MiB import limit",
+            entry.relative_path,
+            MAX_IMPORT_FILE_BYTES / 1024 / 1024
+        ));
+    }
+    let mut data = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut data)
+        .map_err(|e| format!("Failed to read {}: {}", entry.relative_path, e))?;
+    if sha256_hex(&data) != entry.sha256.to_ascii_lowercase() {
+        return Err(format!(
+            "Checksum mismatch for {}. The archive may be damaged or modified.",
+            entry.relative_path
+        ));
+    }
+    Ok(data)
 }
 
 fn sha256_of_file(path: &Path) -> Result<String, String> {
@@ -1687,12 +2155,16 @@ pub fn analyze_import(
         let mut manifest_file = archive
             .by_name("manifest.json")
             .map_err(|_| "No manifest.json found in archive - not a valid EVE Wrench export")?;
+        if manifest_file.size() > 2 * 1024 * 1024 {
+            return Err("Archive manifest is larger than 2 MiB".into());
+        }
         let mut content = String::new();
         manifest_file
             .read_to_string(&mut content)
             .map_err(|e| format!("Failed to read manifest: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {}", e))?
     };
+    validate_manifest(&manifest)?;
 
     let mut new_files: Vec<ImportFileInfo> = Vec::new();
     let mut conflicts: Vec<ImportConflictInfo> = Vec::new();
@@ -1702,12 +2174,13 @@ pub fn analyze_import(
     let aliases_path = aliases_file(&app)?;
 
     for entry in &manifest.files {
-        let rel = &entry.relative_path;
+        let (rel, safe_relative_path) = normalize_manifest_path(&entry.relative_path)?;
+        let _ = read_verified_archive_entry(&mut archive, entry)?;
 
         if rel == "aliases.json" {
             if aliases_path.exists() {
                 let local_checksum = sha256_of_file(&aliases_path)?;
-                if local_checksum != entry.sha256 {
+                if !local_checksum.eq_ignore_ascii_case(&entry.sha256) {
                     aliases_conflict = true;
                     conflicts.push(ImportConflictInfo {
                         relative_path: rel.clone(),
@@ -1732,10 +2205,10 @@ pub fn analyze_import(
             continue;
         }
 
-        let local_path = eve_root.join(rel);
+        let local_path = eve_root.join(safe_relative_path);
         if local_path.exists() {
             let local_checksum = sha256_of_file(&local_path)?;
-            if local_checksum != entry.sha256 {
+            if !local_checksum.eq_ignore_ascii_case(&entry.sha256) {
                 let local_modified = fs::metadata(&local_path)
                     .and_then(|m| m.modified())
                     .ok()
@@ -1754,9 +2227,7 @@ pub fn analyze_import(
                 });
             }
         } else {
-            new_files.push(ImportFileInfo {
-                relative_path: rel.clone(),
-            });
+            new_files.push(ImportFileInfo { relative_path: rel });
         }
     }
 
@@ -1789,76 +2260,61 @@ pub fn execute_import(
         let mut manifest_file = archive
             .by_name("manifest.json")
             .map_err(|_| "No manifest.json found in archive")?;
+        if manifest_file.size() > 2 * 1024 * 1024 {
+            return Err("Archive manifest is larger than 2 MiB".into());
+        }
         let mut content = String::new();
         manifest_file
             .read_to_string(&mut content)
             .map_err(|e| format!("Failed to read manifest: {}", e))?;
         serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {}", e))?
     };
+    validate_manifest(&manifest)?;
 
     let aliases_path = aliases_file(&app)?;
     let mut imported_count = 0usize;
     let mut skipped_count = 0usize;
     let mut backed_up_count = 0usize;
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let overwrite_set: std::collections::HashSet<&str> =
-        overwrite_paths.iter().map(|s| s.as_str()).collect();
+    let overwrite_set: HashSet<String> = overwrite_paths
+        .iter()
+        .filter_map(|path| {
+            normalize_manifest_path(path)
+                .ok()
+                .map(|(normalized, _)| normalized)
+        })
+        .collect();
 
     for entry in &manifest.files {
-        let rel = &entry.relative_path;
-
-        // Read file data from archive
-        let mut zip_file = match archive.by_name(rel) {
-            Ok(f) => f,
-            Err(_) => {
-                skipped_count += 1;
-                continue;
-            }
-        };
-        let mut data = Vec::new();
-        zip_file
-            .read_to_end(&mut data)
-            .map_err(|e| format!("Failed to read {} from archive: {}", rel, e))?;
+        let (rel, safe_relative_path) = normalize_manifest_path(&entry.relative_path)?;
+        let data = read_verified_archive_entry(&mut archive, entry)?;
 
         let target_path = if rel == "aliases.json" {
             aliases_path.clone()
         } else {
-            eve_root.join(rel)
+            eve_root.join(safe_relative_path)
         };
 
         // Check if this is a conflict
         if target_path.exists() {
             let local_checksum = sha256_of_file(&target_path)?;
-            if local_checksum == entry.sha256 {
+            if local_checksum.eq_ignore_ascii_case(&entry.sha256) {
                 // Identical, skip
                 skipped_count += 1;
                 continue;
             }
 
-            if !overwrite_set.contains(rel.as_str()) {
+            if !overwrite_set.contains(&rel) {
                 skipped_count += 1;
                 continue;
             }
 
             // Back up existing file before overwriting
-            if rel != "aliases.json" {
-                if let Some(parent) = target_path.parent() {
-                    let backup_dir = parent.join("backups");
-                    let _ = fs::create_dir_all(&backup_dir);
-
-                    if let Some(fname) = target_path.file_name().and_then(|n| n.to_str()) {
-                        let backup_name = format!("pre_import_{}_{}", fname, timestamp);
-                        let backup_path = backup_dir.join(&backup_name);
-                        if fs::copy(&target_path, &backup_path).is_ok() {
-                            backed_up_count += 1;
-                        }
-                    }
-                }
+            if rel != "aliases.json"
+                && parse_core_filename(&target_path).is_ok()
+                && auto_backup(&target_path, "pre-import").is_ok()
+            {
+                backed_up_count += 1;
             }
         }
 
@@ -1868,7 +2324,7 @@ pub fn execute_import(
         }
 
         // Write the file
-        fs::write(&target_path, &data).map_err(|e| format!("Failed to write {}: {}", rel, e))?;
+        atomic_write(&target_path, &data).map_err(|e| format!("Failed to write {}: {}", rel, e))?;
 
         imported_count += 1;
     }
