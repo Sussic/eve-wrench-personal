@@ -54,9 +54,13 @@ export interface BackupEntry {
     kind: SettingsKind
     original_id: string
     original_name: string | null
+    server: ServerId
+    profile: string
     display_name: string
     relative_time: string
 }
+
+export type BulkTargetScope = 'server' | 'all'
 
 export interface AppData {
     servers: ServerData[]

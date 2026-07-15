@@ -298,8 +298,34 @@ pub struct BackupEntry {
     pub kind: SettingsKind,
     pub original_id: String,
     pub original_name: Option<String>,
+    pub server: Server,
+    pub profile: String,
     pub display_name: String,
     pub relative_time: String,
+}
+
+fn backup_entry_id(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn settings_path_context(path: &Path) -> Result<(Server, String), String> {
+    let profile_dir = path
+        .parent()
+        .ok_or("Could not determine settings profile")?;
+    let profile_name = profile_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("settings_"))
+        .filter(|name| !name.is_empty())
+        .ok_or("Settings file is not inside a settings profile")?;
+    let server_name = profile_dir
+        .parent()
+        .and_then(|directory| directory.file_name())
+        .and_then(|name| name.to_str())
+        .ok_or("Could not determine settings server")?;
+    let server = Server::from_folder_name(server_name)
+        .ok_or_else(|| format!("Unrecognized EVE server folder: {}", server_name))?;
+    Ok((server, profile_name.to_string()))
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -731,6 +757,13 @@ fn scan_backups(custom_eve_path: Option<&str>) -> Result<Vec<BackupEntry>, Strin
         if !server_path.is_dir() {
             continue;
         }
+        let Some(server) = server_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(Server::from_folder_name)
+        else {
+            continue;
+        };
 
         let profile_dirs = match fs::read_dir(&server_path) {
             Ok(e) => e,
@@ -750,6 +783,7 @@ fn scan_backups(custom_eve_path: Option<&str>) -> Result<Vec<BackupEntry>, Strin
             if !dir_name.starts_with("settings_") {
                 continue;
             }
+            let profile = dir_name.trim_start_matches("settings_").to_string();
 
             let backup_dir = profile_path.join("backups");
             let entries = match fs::read_dir(&backup_dir) {
@@ -779,16 +813,19 @@ fn scan_backups(custom_eve_path: Option<&str>) -> Result<Vec<BackupEntry>, Strin
                     _ => continue,
                 };
                 let name = parts[3].to_string();
+                let path_string = path.to_string_lossy().into_owned();
 
                 backups.push(BackupEntry {
-                    id: format!("{}_{}", name, timestamp),
+                    id: backup_entry_id(&path),
                     display_name: name.clone(),
                     name,
-                    path: path.to_string_lossy().into_owned(),
+                    path: path_string,
                     timestamp,
                     kind,
                     original_id,
                     original_name: None,
+                    server,
+                    profile: profile.clone(),
                     relative_time: format_relative_time(timestamp),
                 });
             }
@@ -957,7 +994,9 @@ const AU_METERS: f64 = 149_597_870_700.0;
 const MAX_CUSTOM_FORMATIONS: usize = 10;
 const MAX_PROBES_PER_FORMATION: usize = 8;
 const MAX_FORMATION_NAME_CHARS: usize = 64;
-const VALID_SCAN_RANGES_AU: [f64; 8] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+// Union of Core Scanner Probe (0.25–32 AU) and Combat Scanner Probe
+// (0.5–64 AU) ranges. Probe type is not stored in a custom formation.
+const VALID_SCAN_RANGES_AU: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 
 // Windows FILETIME: 100ns intervals since 1601-01-01, which is what EVE
 // stamps on every settings value.
@@ -1683,6 +1722,29 @@ mod formation_tests {
     }
 
     #[test]
+    fn backup_identity_uses_the_unique_file_path() {
+        let first = Path::new("server/settings_Default/backups/pre_user_1_10.bak");
+        let second = Path::new("server/settings_Default/backups/pre_user_2_10.bak");
+        assert_ne!(backup_entry_id(first), backup_entry_id(second));
+    }
+
+    #[test]
+    fn accepts_combat_probe_64_au_range() {
+        let formation = ProbeFormation {
+            id: 0,
+            name: "combat deep spread".to_string(),
+            probes: vec![FormationProbe {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                range: 64.0 * AU_METERS,
+            }],
+        };
+
+        assert!(validate_formations(&[formation]).is_ok());
+    }
+
+    #[test]
     fn formations_round_trip_through_marshal() {
         let dir = std::env::temp_dir().join("eve-wrench-formation-test");
         fs::create_dir_all(&dir).unwrap();
@@ -1849,18 +1911,22 @@ pub fn create_backup(
         _ => return Err("Unknown settings type".into()),
     };
     let id = id.to_string();
+    let (server, profile) = settings_path_context(&source)?;
 
     let (dest, timestamp) = auto_backup(&source, &backup_name)?;
+    let path = dest.to_string_lossy().into_owned();
 
     let entry = BackupEntry {
-        id: format!("{}_{}", backup_name, timestamp),
+        id: backup_entry_id(&dest),
         display_name: backup_name.clone(),
         name: backup_name,
-        path: dest.to_string_lossy().into_owned(),
+        path,
         timestamp,
         kind,
         original_id: id.to_string(),
         original_name: None,
+        server,
+        profile,
         relative_time: format_relative_time(timestamp),
     };
 
@@ -2032,6 +2098,21 @@ pub struct ImportResultInfo {
     pub backed_up_count: usize,
 }
 
+#[derive(Debug)]
+struct ImportPlanItem {
+    entry: ManifestFileEntry,
+    relative_path: String,
+    target_path: PathBuf,
+    existed: bool,
+}
+
+#[derive(Debug)]
+struct ImportSafetyBackup {
+    target_path: PathBuf,
+    backup_path: PathBuf,
+    keep_after_success: bool,
+}
+
 fn sha256_of_bytes(data: &[u8]) -> String {
     sha256_hex(data)
 }
@@ -2129,6 +2210,85 @@ fn read_verified_archive_entry<R: Read + std::io::Seek>(
 fn sha256_of_file(path: &Path) -> Result<String, String> {
     let data = fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     Ok(sha256_of_bytes(&data))
+}
+
+fn create_temporary_import_backup(path: &Path, index: usize) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("settings");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let backup_path = parent.join(format!(
+        ".{}.eve-wrench-import.{}.{}.{}.rollback",
+        file_name,
+        std::process::id(),
+        nonce,
+        index
+    ));
+    fs::copy(path, &backup_path).map_err(|error| {
+        format!(
+            "Failed to create a safety copy of {}: {}",
+            path.display(),
+            error
+        )
+    })?;
+    Ok(backup_path)
+}
+
+fn restore_import_changes(
+    written: &[&ImportPlanItem],
+    safety_backups: &[ImportSafetyBackup],
+) -> Vec<String> {
+    let backups: HashMap<&Path, &Path> = safety_backups
+        .iter()
+        .map(|backup| (backup.target_path.as_path(), backup.backup_path.as_path()))
+        .collect();
+    let mut failures = Vec::new();
+
+    for item in written.iter().rev() {
+        if item.existed {
+            let Some(backup_path) = backups.get(item.target_path.as_path()) else {
+                failures.push(format!(
+                    "No rollback copy was available for {}",
+                    item.relative_path
+                ));
+                continue;
+            };
+            match fs::read(backup_path)
+                .map_err(|error| error.to_string())
+                .and_then(|data| atomic_write(&item.target_path, &data))
+            {
+                Ok(()) => {}
+                Err(error) => failures.push(format!(
+                    "Could not restore {}: {}",
+                    item.relative_path, error
+                )),
+            }
+        } else if item.target_path.exists() {
+            if let Err(error) = fs::remove_file(&item.target_path) {
+                failures.push(format!(
+                    "Could not remove new file {}: {}",
+                    item.relative_path, error
+                ));
+            }
+        }
+    }
+
+    failures
+}
+
+fn remove_import_safety_backups(backups: &[ImportSafetyBackup], include_permanent: bool) {
+    for backup in backups {
+        if include_permanent || !backup.keep_after_success {
+            let _ = fs::remove_file(&backup.backup_path);
+        }
+    }
 }
 
 fn collect_exportable_files(eve_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
@@ -2432,10 +2592,6 @@ pub fn execute_import(
     validate_manifest(&manifest)?;
 
     let aliases_path = aliases_file(&app)?;
-    let mut imported_count = 0usize;
-    let mut skipped_count = 0usize;
-    let mut backed_up_count = 0usize;
-
     let overwrite_set: HashSet<String> = overwrite_paths
         .iter()
         .filter_map(|path| {
@@ -2445,54 +2601,111 @@ pub fn execute_import(
         })
         .collect();
 
+    // Phase one: verify every archive payload and build the complete plan.
+    // No local setting is changed until this succeeds for the whole archive.
+    let mut plan = Vec::new();
+    let mut skipped_count = 0usize;
     for entry in &manifest.files {
-        let (rel, safe_relative_path) = normalize_manifest_path(&entry.relative_path)?;
-        let data = read_verified_archive_entry(&mut archive, entry)?;
-
-        let target_path = if rel == "aliases.json" {
+        let (relative_path, safe_relative_path) = normalize_manifest_path(&entry.relative_path)?;
+        let _ = read_verified_archive_entry(&mut archive, entry)?;
+        let target_path = if relative_path == "aliases.json" {
             aliases_path.clone()
         } else {
             eve_root.join(safe_relative_path)
         };
-
-        // Check if this is a conflict
-        if target_path.exists() {
+        let existed = target_path.exists();
+        if existed {
             let local_checksum = sha256_of_file(&target_path)?;
-            if local_checksum.eq_ignore_ascii_case(&entry.sha256) {
-                // Identical, skip
-                skipped_count += 1;
-                continue;
-            }
-
-            if !overwrite_set.contains(&rel) {
-                skipped_count += 1;
-                continue;
-            }
-
-            // Back up existing file before overwriting
-            if rel != "aliases.json"
-                && parse_core_filename(&target_path).is_ok()
-                && auto_backup(&target_path, "pre-import").is_ok()
+            if local_checksum.eq_ignore_ascii_case(&entry.sha256)
+                || !overwrite_set.contains(&relative_path)
             {
-                backed_up_count += 1;
+                skipped_count += 1;
+                continue;
             }
         }
-
-        // Ensure parent directory exists
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
-        }
-
-        // Write the file
-        atomic_write(&target_path, &data).map_err(|e| format!("Failed to write {}: {}", rel, e))?;
-
-        imported_count += 1;
+        plan.push(ImportPlanItem {
+            entry: entry.clone(),
+            relative_path,
+            target_path,
+            existed,
+        });
     }
 
+    // Phase two: create every required safety copy before the first write.
+    // Core settings keep their normal user-visible pre-import backup. Other
+    // files receive a temporary rollback copy for the duration of the import.
+    let mut safety_backups = Vec::new();
+    let mut backed_up_count = 0usize;
+    for (index, item) in plan.iter().enumerate().filter(|(_, item)| item.existed) {
+        let backup = if parse_core_filename(&item.target_path).is_ok() {
+            let (backup_path, _) = auto_backup(&item.target_path, "pre-import").map_err(
+                |error| {
+                    remove_import_safety_backups(&safety_backups, false);
+                    format!(
+                        "Import stopped before making changes because {} could not be backed up: {}",
+                        item.relative_path, error
+                    )
+                },
+            )?;
+            backed_up_count += 1;
+            ImportSafetyBackup {
+                target_path: item.target_path.clone(),
+                backup_path,
+                keep_after_success: true,
+            }
+        } else {
+            let backup_path =
+                create_temporary_import_backup(&item.target_path, index).map_err(|error| {
+                    remove_import_safety_backups(&safety_backups, false);
+                    format!(
+                        "Import stopped before making changes because {} could not be secured: {}",
+                        item.relative_path, error
+                    )
+                })?;
+            ImportSafetyBackup {
+                target_path: item.target_path.clone(),
+                backup_path,
+                keep_after_success: false,
+            }
+        };
+        safety_backups.push(backup);
+    }
+
+    // Phase three: perform the writes. If any one fails, restore everything
+    // already written and report any rollback problem explicitly.
+    let mut written: Vec<&ImportPlanItem> = Vec::new();
+    for item in &plan {
+        let result = (|| -> Result<(), String> {
+            let data = read_verified_archive_entry(&mut archive, &item.entry)?;
+            if let Some(parent) = item.target_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to create directory: {}", error))?;
+            }
+            atomic_write(&item.target_path, &data)
+                .map_err(|error| format!("Failed to write {}: {}", item.relative_path, error))
+        })();
+
+        if let Err(error) = result {
+            let rollback_failures = restore_import_changes(&written, &safety_backups);
+            if rollback_failures.is_empty() {
+                remove_import_safety_backups(&safety_backups, false);
+            }
+            emit_data_changed(&app);
+            let rollback_summary = if rollback_failures.is_empty() {
+                "All earlier writes were rolled back.".to_string()
+            } else {
+                format!("Rollback also reported: {}", rollback_failures.join("; "))
+            };
+            return Err(format!("{} {}", error, rollback_summary));
+        }
+        written.push(item);
+    }
+
+    remove_import_safety_backups(&safety_backups, false);
     emit_data_changed(&app);
 
     Ok(ImportResultInfo {
-        imported_count,
+        imported_count: plan.len(),
         skipped_count,
         backed_up_count,
     })

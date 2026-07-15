@@ -88,6 +88,12 @@ onMounted(async () => {
             >
                 {{ t('titleBar.preview') }}
             </span>
+            <span
+                v-if="appInfo"
+                class="font-mono text-[10px] tracking-normal text-muted-foreground/70"
+            >
+                v{{ appInfo.version }}
+            </span>
         </div>
 
         <!-- Right: Actions + Window controls -->

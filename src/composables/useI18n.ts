@@ -19,6 +19,7 @@ export function useI18n() {
     const changeLanguage = (lang: string) => {
         currentLocale.value = lang
         locale.value = lang
+        localStorage.setItem('eve-wrench-locale', lang)
     }
 
     // 监听语言变化

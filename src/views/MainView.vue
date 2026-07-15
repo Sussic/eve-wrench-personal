@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import 'vue-sonner/style.css'
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -15,12 +15,14 @@ import ImportDialog from '@/components/ImportDialog.vue'
 import { useCopyManager } from '@/composables/useCopyManager'
 import { useI18n } from '@/composables/useI18n'
 import { isBackup } from '@/types'
+import type { ServerId } from '@/types'
 
 const colorMode = useColorMode()
 const { t } = useI18n()
 const {
     appData,
     loading,
+    loadError,
     copying,
     source,
     targets,
@@ -33,9 +35,11 @@ const {
     setSource,
     clearSource,
     addTarget,
+    addTargets,
     removeTarget,
     clearTargets,
     addAllFromProfile,
+    addAllTargets,
     executeCopy,
     createBackup,
     deleteBackup,
@@ -58,6 +62,8 @@ const {
     copyGroupSelection,
     eveRunning,
 } = useCopyManager()
+
+const activeServerId = ref<ServerId | null>(null)
 
 function isBackupSource(backup: { id: string }): boolean {
     return !!(
@@ -131,6 +137,35 @@ onMounted(init)
                     </div>
                 </div>
 
+                <template v-else-if="loadError && !appData">
+                    <div class="flex flex-1 items-center justify-center">
+                        <div
+                            class="flex max-w-md flex-col items-center gap-3 text-center"
+                        >
+                            <AlertTriangle class="size-12 text-destructive" />
+                            <h3 class="font-semibold">
+                                {{ t('empty.loadFailed') }}
+                            </h3>
+                            <p class="text-sm text-muted-foreground">
+                                {{ loadError }}
+                            </p>
+                            <div class="mt-2 flex gap-2">
+                                <Button size="sm" @click="refresh">
+                                    {{ t('common.retry') }}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    @click="selectCustomEvePath"
+                                >
+                                    <FolderOpen class="mr-2 size-4" />
+                                    {{ t('settings.changeFolder') }}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
                 <template v-else-if="!hasData">
                     <div class="flex flex-1 items-center justify-center">
                         <div
@@ -165,6 +200,9 @@ onMounted(init)
                         :is-backup-source="isBackupSource"
                         @set-source="setSource"
                         @add-target="addTarget"
+                        @remove-target="removeTarget"
+                        @add-visible-targets="addTargets"
+                        @active-server-changed="activeServerId = $event"
                         @backup="createBackup"
                         @restore="restoreBackup"
                         @apply-backup="applyBackup"
@@ -182,9 +220,13 @@ onMounted(init)
                         :can-copy="canCopy"
                         :copying="copying"
                         :group-selection="copyGroupSelection"
+                        :active-server-id="activeServerId"
                         @clear-source="clearSource"
                         @remove-target="removeTarget"
                         @clear-targets="clearTargets"
+                        @add-all-targets="
+                            (scope) => addAllTargets(scope, activeServerId)
+                        "
                         @execute-copy="executeCopy"
                         @set-group="
                             (id, value) => (copyGroupSelection[id] = value)

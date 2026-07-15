@@ -47,6 +47,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     setSource: [entry: SettingsEntry]
     addTarget: [entry: SettingsEntry]
+    removeTarget: [entry: SettingsEntry]
     backup: [entry: SettingsEntry]
     restore: [entry: SettingsEntry, backup: BackupEntry]
     aliasChanged: []
@@ -65,7 +66,7 @@ async function saveAlias() {
         editing.value = false
         emit('aliasChanged')
     } catch (e) {
-        console.error('Failed to save alias:', e)
+        toast.error(t('toast.aliasSaveFailed'), { description: String(e) })
     }
 }
 
@@ -167,13 +168,18 @@ async function openFormationEditor() {
                             variant="ghost"
                             size="icon"
                             :disabled="!sourceKind || sourceKind !== entry.kind"
-                            @click="emit('addTarget', entry)"
+                            @click="
+                                isTarget
+                                    ? emit('removeTarget', entry)
+                                    : emit('addTarget', entry)
+                            "
                         >
-                            <ArrowDownToLine class="size-4" />
+                            <X v-if="isTarget" class="size-4" />
+                            <ArrowDownToLine v-else class="size-4" />
                         </Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{{
-                        t('actions.target')
+                        t(isTarget ? 'actions.removeTarget' : 'actions.target')
                     }}</TooltipContent>
                 </Tooltip>
                 <DropdownMenu>

@@ -1,109 +1,272 @@
 import type { Component } from 'vue'
 import {
-    Grid2x2,
+    ArrowLeftRight,
+    ArrowUpDown,
+    Box,
+    ChevronsUpDown,
+    CircleDot,
     Crosshair,
-    Skull,
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    ChevronsUp,
-    ChevronsDown,
+    Grid2x2,
+    Radar,
 } from 'lucide-vue-next'
 import type { FormationProbe } from '@/types'
+import { AU_KM } from '@/lib/formationEditorUtils'
 
-// Preset probe positions are in editor units: km for x/y/z, AU for range.
-// Axes follow EVE's solar-system convention: +x West, +y Up, +z North.
-const R = 32 // default to the maximum 32 AU scan range
+// Positions use kilometres, scan ranges use AU. Axes follow EVE's solar-system
+// convention: +x West, +y Up, +z North.
+export const CORE_SCAN_RANGES = [0.25, 0.5, 1, 2, 4, 8, 16, 32] as const
+export const COMBAT_SCAN_RANGES = [0.5, 1, 2, 4, 8, 16, 32, 64] as const
+export const ALL_SCAN_RANGES = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64] as const
 
-function p(x: number, y: number, z: number): FormationProbe {
-    return { x, y, z, range: R }
+export type ProbeKind = 'core' | 'combat'
+export type BuilderKind =
+    | 'pinpoint'
+    | 'tetrahedral'
+    | 'spread'
+    | 'ring'
+    | 'shell'
+    | 'ladder'
+export type FormationAxis = 'northSouth' | 'westEast' | 'upDown'
+
+export function scanRangesFor(kind: ProbeKind): readonly number[] {
+    return kind === 'core' ? CORE_SCAN_RANGES : COMBAT_SCAN_RANGES
 }
 
-// 8-probe placeholder spread at 250 km — the neutral starting point
-function blankSpread(): FormationProbe[] {
+function probe(x: number, y: number, z: number, range: number): FormationProbe {
+    return { x, y, z, range }
+}
+
+// The familiar EVE-style pinpoint shape: a centre probe surrounded by a
+// pentagonal bipyramid. It is kept as the practical client-style baseline,
+// rather than being presented as a mathematically proven optimum.
+export function buildPinpoint(rangeAu: number): FormationProbe[] {
+    const radius = (rangeAu * AU_KM) / 2
+    const probes = [probe(0, 0, 0, rangeAu)]
+    probes.push(probe(0, radius, 0, rangeAu))
+    probes.push(probe(0, -radius, 0, rangeAu))
+    for (let i = 0; i < 5; i++) {
+        const angle = (i * Math.PI * 2) / 5
+        probes.push(
+            probe(
+                radius * Math.sin(angle),
+                0,
+                radius * Math.cos(angle),
+                rangeAu
+            )
+        )
+    }
+    return probes
+}
+
+// Experimental geometry-balanced layout. The four closer probes are the vertices
+// of a regular tetrahedron; the four outer probes form its inverse. Both sets
+// independently have a zero centroid. If EVE uses the four strongest hits, the
+// closer set supplies the best-conditioned four-point 3D geometry; the inverse
+// set adds symmetric coverage when the estimate is offset from centre.
+export function buildTetrahedralScan(rangeAu: number): FormationProbe[] {
+    const scanRadiusKm = rangeAu * AU_KM
+    const innerRadius = scanRadiusKm * 0.4
+    const outerRadius = scanRadiusKm * 0.5
+    const tetrahedron: Array<[number, number, number]> = [
+        [1, 1, 1],
+        [1, -1, -1],
+        [-1, 1, -1],
+        [-1, -1, 1],
+    ]
+    const atRadius = ([x, y, z]: [number, number, number], radius: number) => {
+        const scale = radius / Math.sqrt(3)
+        return probe(x * scale, y * scale, z * scale, rangeAu)
+    }
     return [
-        p(250, 0, 0),
-        p(-250, 0, 0),
-        p(0, 0, 250),
-        p(0, 0, -250),
-        p(0, 250, 0),
-        p(0, -250, 0),
-        p(0, 500, 0),
-        p(0, -500, 0),
+        ...tetrahedron.map((point) => atRadius(point, innerRadius)),
+        ...tetrahedron.map(([x, y, z]) => atRadius([-x, -y, -z], outerRadius)),
     ]
 }
 
-// Pinpoint: 500 km sphere with an extended 1000 km vertical pair
-function pinpoint(): FormationProbe[] {
-    return [
-        p(500, 0, 0),
-        p(-500, 0, 0),
-        p(0, 0, 500),
-        p(0, 0, -500),
-        p(0, 500, 0),
-        p(0, -500, 0),
-        p(0, 1000, 0),
-        p(0, -1000, 0),
-    ]
+// Eight cube corners provide symmetric broad coverage. Each component is half
+// the selected scan range, so the formation centre remains inside every sphere.
+export function buildSpread(rangeAu: number): FormationProbe[] {
+    const component = (rangeAu * AU_KM) / 2
+    const probes: FormationProbe[] = []
+    for (const x of [-component, component]) {
+        for (const y of [-component, component]) {
+            for (const z of [-component, component]) {
+                probes.push(probe(x, y, z, rangeAu))
+            }
+        }
+    }
+    return probes
 }
 
-// Drifter: one probe placed behind the Drifter (11,500 km West, 3,500 km Up),
-// the rest left as 250 km placeholders to reposition
-function drifter(): FormationProbe[] {
-    return [
-        p(11500, 3500, 0),
-        p(250, 0, 0),
-        p(-250, 0, 0),
-        p(0, 0, 250),
-        p(0, 0, -250),
-        p(0, 250, 0),
-        p(0, -250, 0),
-        p(0, 500, 0),
-    ]
-}
-
-export interface FormationPreset {
-    id: string // i18n key under formationEditor.presets; 'blank' keeps a generic name
-    icon: Component
-    probes: () => FormationProbe[]
-}
-
-export const FORMATION_PRESETS: FormationPreset[] = [
-    { id: 'blank', icon: Grid2x2, probes: blankSpread },
-    { id: 'pinpoint', icon: Crosshair, probes: pinpoint },
-    { id: 'drifter', icon: Skull, probes: drifter },
-]
-
-// Directional stacks: all 8 probes layered along one axis at 200 km intervals
-type Stack = {
-    id: string
-    axis: 'x' | 'y' | 'z'
-    sign: 1 | -1
-    icon: Component
-}
-const STACK_DIRS: Stack[] = [
-    { id: 'north', axis: 'z', sign: 1, icon: ArrowUp },
-    { id: 'south', axis: 'z', sign: -1, icon: ArrowDown },
-    { id: 'west', axis: 'x', sign: 1, icon: ArrowLeft }, // +x is West
-    { id: 'east', axis: 'x', sign: -1, icon: ArrowRight },
-    { id: 'up', axis: 'y', sign: 1, icon: ChevronsUp },
-    { id: 'down', axis: 'y', sign: -1, icon: ChevronsDown },
-]
-
-function stack(dir: Stack): FormationProbe[] {
+// Eight equally spaced on-grid bookmark points in the horizontal N/S-W/E plane.
+export function buildGridRing(
+    radiusKm: number,
+    rangeAu: number
+): FormationProbe[] {
     return Array.from({ length: 8 }, (_, i) => {
-        const d = (i + 1) * 200 * dir.sign
-        return p(
-            dir.axis === 'x' ? d : 0,
-            dir.axis === 'y' ? d : 0,
-            dir.axis === 'z' ? d : 0
+        const angle = (i * Math.PI * 2) / 8
+        return probe(
+            radiusKm * Math.sin(angle),
+            0,
+            radiusKm * Math.cos(angle),
+            rangeAu
         )
     })
 }
 
-export const STACK_PRESETS: FormationPreset[] = STACK_DIRS.map((dir) => ({
-    id: dir.id,
-    icon: dir.icon,
-    probes: () => stack(dir),
+// Eight octants at an exact radial distance, giving bookmarks above and below
+// the grid as well as around it.
+export function buildGridShell(
+    radiusKm: number,
+    rangeAu: number
+): FormationProbe[] {
+    const component = radiusKm / Math.sqrt(3)
+    const probes: FormationProbe[] = []
+    for (const x of [-component, component]) {
+        for (const y of [-component, component]) {
+            for (const z of [-component, component]) {
+                probes.push(probe(x, y, z, rangeAu))
+            }
+        }
+    }
+    return probes
+}
+
+const AXIS_COORDINATES: Record<FormationAxis, 'x' | 'y' | 'z'> = {
+    northSouth: 'z',
+    westEast: 'x',
+    upDown: 'y',
+}
+
+// Four mirrored pairs at successive distances along one axis. Custom
+// formations are centred by EVE, so every on-grid layout must have zero
+// centroid; a one-sided ladder would simply be shifted into a two-sided one.
+export function buildDirectionalLadder(
+    formationAxis: FormationAxis,
+    spacingKm: number,
+    rangeAu: number
+): FormationProbe[] {
+    const axis = AXIS_COORDINATES[formationAxis]
+    return [-4, -3, -2, -1, 1, 2, 3, 4].map((step) => {
+        const distance = step * spacingKm
+        return probe(
+            axis === 'x' ? distance : 0,
+            axis === 'y' ? distance : 0,
+            axis === 'z' ? distance : 0,
+            rangeAu
+        )
+    })
+}
+
+export function buildFormationProbes(options: {
+    kind: BuilderKind
+    rangeAu: number
+    distanceKm: number
+    axis: FormationAxis
+}): FormationProbe[] {
+    switch (options.kind) {
+        case 'pinpoint':
+            return buildPinpoint(options.rangeAu)
+        case 'tetrahedral':
+            return buildTetrahedralScan(options.rangeAu)
+        case 'spread':
+            return buildSpread(options.rangeAu)
+        case 'ring':
+            return buildGridRing(options.distanceKm, options.rangeAu)
+        case 'shell':
+            return buildGridShell(options.distanceKm, options.rangeAu)
+        case 'ladder':
+            return buildDirectionalLadder(
+                options.axis,
+                options.distanceKm,
+                options.rangeAu
+            )
+    }
+}
+
+export interface FormationPreset {
+    id: string
+    icon: Component
+    probes: () => FormationProbe[]
+}
+
+function blank(): FormationProbe[] {
+    return buildGridShell(250, 0.5)
+}
+
+export const SCAN_PRESETS: FormationPreset[] = [
+    { id: 'blank', icon: Grid2x2, probes: blank },
+    {
+        id: 'corePinpoint025',
+        icon: Crosshair,
+        probes: () => buildPinpoint(0.25),
+    },
+    {
+        id: 'combatPinpoint05',
+        icon: Crosshair,
+        probes: () => buildPinpoint(0.5),
+    },
+    {
+        id: 'coreTetrahedral025',
+        icon: Crosshair,
+        probes: () => buildTetrahedralScan(0.25),
+    },
+    {
+        id: 'combatTetrahedral05',
+        icon: Crosshair,
+        probes: () => buildTetrahedralScan(0.5),
+    },
+    {
+        id: 'systemSpread8',
+        icon: Radar,
+        probes: () => buildSpread(8),
+    },
+    {
+        id: 'coreDeepSpread32',
+        icon: Radar,
+        probes: () => buildSpread(32),
+    },
+    {
+        id: 'combatDeepSpread64',
+        icon: Radar,
+        probes: () => buildSpread(64),
+    },
+]
+
+export const GRID_PRESETS: FormationPreset[] = [
+    {
+        id: 'gridRing250',
+        icon: CircleDot,
+        probes: () => buildGridRing(250, 0.5),
+    },
+    {
+        id: 'gridRing1000',
+        icon: CircleDot,
+        probes: () => buildGridRing(1000, 0.5),
+    },
+    {
+        id: 'gridShell250',
+        icon: Box,
+        probes: () => buildGridShell(250, 0.5),
+    },
+    {
+        id: 'gridShell1000',
+        icon: Box,
+        probes: () => buildGridShell(1000, 0.5),
+    },
+]
+
+const STACK_AXES: Array<{
+    id: FormationAxis
+    icon: Component
+}> = [
+    { id: 'northSouth', icon: ArrowUpDown },
+    { id: 'westEast', icon: ArrowLeftRight },
+    { id: 'upDown', icon: ChevronsUpDown },
+]
+
+export const STACK_PRESETS: FormationPreset[] = STACK_AXES.map((axis) => ({
+    id: axis.id,
+    icon: axis.icon,
+    probes: () => buildDirectionalLadder(axis.id, 250, 0.5),
 }))

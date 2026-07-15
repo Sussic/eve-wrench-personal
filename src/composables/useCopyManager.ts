@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { useStorage } from '@vueuse/core'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -14,9 +15,12 @@ import type {
     ImportAnalysis,
     ImportResultInfo,
     BatchMutationResult,
+    BulkTargetScope,
+    ServerId,
 } from '@/types'
-import { isBackup } from '@/types'
+import { getServerShortName, isBackup } from '@/types'
 import { defaultGroupSelection, groupsForKind } from '@/lib/copyGroups'
+import { collectEntriesByKind, mergeUniqueTargets } from '@/lib/targetSelection'
 import {
     settingsStore,
     getAutoBackup,
@@ -29,6 +33,7 @@ import { useEveRunning } from './useEveRunning'
 
 const appData = ref<AppData | null>(null)
 const loading = ref(true)
+const loadError = ref<string | null>(null)
 const copying = ref(false)
 const source = ref<SourceItem | null>(null)
 const targets = ref<SettingsEntry[]>([])
@@ -36,7 +41,12 @@ const customEvePath = ref<string | null>(null)
 const importAnalysis = ref<ImportAnalysis | null>(null)
 const importFilePath = ref<string | null>(null)
 const showImportDialog = ref(false)
-const copyGroupSelection = ref<Record<string, boolean>>(defaultGroupSelection())
+const copyGroupSelection = useStorage<Record<string, boolean>>(
+    'eve-wrench-copy-groups',
+    defaultGroupSelection(),
+    undefined,
+    { mergeDefaults: true }
+)
 const autoBackup = ref(true)
 let listenerSetup = false
 
@@ -68,10 +78,18 @@ export function useCopyManager() {
             .map((g) => g.id)
     })
 
+    const hasSelectedCopyGroup = computed(() => {
+        if (!sourceKind.value) return false
+        return groupsForKind(sourceKind.value).some(
+            (group) => copyGroupSelection.value[group.id]
+        )
+    })
+
     const canCopy = computed(() => {
         return (
             source.value !== null &&
             targets.value.length > 0 &&
+            hasSelectedCopyGroup.value &&
             !copying.value &&
             !eveRunning.value
         )
@@ -85,12 +103,62 @@ export function useCopyManager() {
         )
     })
 
+    function reconcileSelections(data: AppData) {
+        const entriesByPath = new Map<string, SettingsEntry>()
+        for (const server of data.servers) {
+            for (const profile of server.profiles) {
+                for (const entry of [
+                    ...profile.accounts,
+                    ...profile.characters,
+                ]) {
+                    entriesByPath.set(entry.path, entry)
+                }
+            }
+        }
+        const backupsByPath = new Map(
+            data.backups.map((backup) => [backup.path, backup])
+        )
+        let sourceRemoved = false
+        if (source.value) {
+            const rebound = isBackup(source.value)
+                ? backupsByPath.get(source.value.path)
+                : entriesByPath.get(source.value.path)
+            if (rebound) source.value = rebound
+            else {
+                source.value = null
+                sourceRemoved = true
+            }
+        }
+
+        const previousTargetCount = targets.value.length
+        targets.value = targets.value
+            .map((target) => entriesByPath.get(target.path))
+            .filter((target): target is SettingsEntry => !!target)
+        if (sourceRemoved) targets.value = []
+
+        const removedTargets = previousTargetCount - targets.value.length
+        if (sourceRemoved) {
+            toast.warning(t('toast.selectionSourceRemoved'), {
+                description: t('toast.selectionSourceRemovedDesc'),
+            })
+        } else if (removedTargets > 0) {
+            toast.warning(t('toast.selectionTargetsRemoved'), {
+                description: t('toast.selectionTargetsRemovedDesc', {
+                    count: removedTargets,
+                }),
+            })
+        }
+    }
+
     async function loadData(showToast = false) {
         loading.value = true
+        loadError.value = null
         try {
-            appData.value = await invoke<AppData>('get_app_data', {
+            const data = await invoke<AppData>('get_app_data', {
                 customEvePath: customEvePath.value,
             })
+            reconcileSelections(data)
+            appData.value = data
             if (showToast) {
                 const serverCount = appData.value?.servers.length || 0
                 const backupCount = appData.value?.backups.length || 0
@@ -104,7 +172,10 @@ export function useCopyManager() {
                 }
             }
         } catch (e: unknown) {
-            toast.error(t('toast.loadDataFailed'), { description: String(e) })
+            loadError.value = String(e)
+            toast.error(t('toast.loadDataFailed'), {
+                description: loadError.value,
+            })
         } finally {
             loading.value = false
         }
@@ -173,7 +244,10 @@ export function useCopyManager() {
             targets.value = []
         }
         source.value = item
-        targets.value = targets.value.filter((t) => t.kind === newKind)
+        const sourcePath = isBackup(item) ? null : item.path
+        targets.value = targets.value.filter(
+            (target) => target.kind === newKind && target.path !== sourcePath
+        )
     }
 
     function clearSource() {
@@ -205,6 +279,21 @@ export function useCopyManager() {
         targets.value.push(entry)
     }
 
+    function addTargets(entries: SettingsEntry[]) {
+        if (!source.value) {
+            toast.error(t('toast.noSourceSelected'), {
+                description: t('toast.noSourceSelectedDesc'),
+            })
+            return
+        }
+        const excludedPath = isBackup(source.value) ? null : source.value.path
+        targets.value = mergeUniqueTargets(
+            targets.value,
+            entries.filter((entry) => entry.kind === sourceKind.value),
+            excludedPath
+        )
+    }
+
     function removeTarget(entry: SettingsEntry) {
         targets.value = targets.value.filter((t) => t.path !== entry.path)
     }
@@ -231,15 +320,67 @@ export function useCopyManager() {
         }
     }
 
+    function addAllTargets(
+        scope: BulkTargetScope,
+        activeServerId: ServerId | null
+    ) {
+        if (!source.value || !appData.value) {
+            toast.error(t('toast.noSourceSelected'), {
+                description: t('toast.noSourceSelectedDesc'),
+            })
+            return
+        }
+
+        if (scope === 'server' && !activeServerId) return
+        const candidates = collectEntriesByKind(
+            appData.value,
+            source.value.kind,
+            scope === 'server' ? activeServerId : null
+        )
+        const excludedPath = isBackup(source.value) ? null : source.value.path
+        targets.value = mergeUniqueTargets(
+            targets.value,
+            candidates,
+            excludedPath
+        )
+    }
+
     async function executeCopy() {
         if (!source.value || targets.value.length === 0) return
 
-        const confirmed = await confirm({
-            title: t('dialog.copySettings'),
-            description: t('dialog.copySettingsDesc', {
+        const targetBreakdown = new Map<string, number>()
+        for (const target of targets.value) {
+            const label = getServerShortName(target.server)
+            targetBreakdown.set(label, (targetBreakdown.get(label) ?? 0) + 1)
+        }
+        const includedGroups = groupsForKind(source.value.kind)
+            .filter((group) => copyGroupSelection.value[group.id])
+            .map((group) => t(`copyGroups.${group.id}`))
+            .join(', ')
+        const targetSummary = [...targetBreakdown]
+            .map(([server, count]) => `${server}: ${count}`)
+            .join(' · ')
+        const sourceServer = isBackup(source.value) ? null : source.value.server
+        const crossesServers =
+            sourceServer !== null &&
+            targets.value.some((target) => target.server !== sourceServer)
+        const description = [
+            t('dialog.copySettingsDesc', {
                 source: source.value.display_name,
                 count: targets.value.length,
             }),
+            t('dialog.copyTargetsSummary', { targets: targetSummary }),
+            t('dialog.copyGroupsSummary', { groups: includedGroups }),
+            t('dialog.copyBackupSummary', {
+                status: autoBackup.value
+                    ? t('common.enabled')
+                    : t('common.disabled'),
+            }),
+            ...(crossesServers ? [t('dialog.crossServerWarning')] : []),
+        ].join('\n')
+        const confirmed = await confirm({
+            title: t('dialog.copySettings'),
+            description,
             confirmText: t('dialog.copy'),
         })
         if (!confirmed) return
@@ -470,6 +611,13 @@ export function useCopyManager() {
     }
 
     async function exportSettings() {
+        const confirmed = await confirm({
+            title: t('dialog.exportPrivacyTitle'),
+            description: t('dialog.exportPrivacyDesc'),
+            confirmText: t('importExport.export'),
+        })
+        if (!confirmed) return
+
         const exportPath = await save({
             title: t('dialog.exportSettings'),
             defaultPath: `eve-wrench-export-${Date.now()}.zip`,
@@ -568,6 +716,7 @@ export function useCopyManager() {
     return {
         appData,
         loading,
+        loadError,
         copying,
         source,
         targets,
@@ -580,9 +729,11 @@ export function useCopyManager() {
         setSource,
         clearSource,
         addTarget,
+        addTargets,
         removeTarget,
         clearTargets,
         addAllFromProfile,
+        addAllTargets,
         executeCopy,
         createBackup,
         deleteBackup,

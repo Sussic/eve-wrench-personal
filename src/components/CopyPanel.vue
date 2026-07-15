@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { User, Rocket, ArrowDown, X, Copy } from 'lucide-vue-next'
-import type { SourceItem, SettingsEntry } from '@/types'
+import { User, Rocket, ArrowDown, X, Copy, ListPlus } from 'lucide-vue-next'
+import type {
+    BulkTargetScope,
+    ServerId,
+    SourceItem,
+    SettingsEntry,
+} from '@/types'
 import { isBackup, getServerShortName, getServerColor } from '@/types'
 import { groupsForKind } from '@/lib/copyGroups'
 import { useI18n } from '@/composables/useI18n'
@@ -15,12 +20,14 @@ const props = defineProps<{
     canCopy: boolean
     copying: boolean
     groupSelection: Record<string, boolean>
+    activeServerId: ServerId | null
 }>()
 
 const emit = defineEmits<{
     clearSource: []
     removeTarget: [entry: SettingsEntry]
     clearTargets: []
+    addAllTargets: [scope: BulkTargetScope]
     executeCopy: []
     setGroup: [id: string, value: boolean]
 }>()
@@ -30,6 +37,21 @@ const { t } = useI18n()
 const visibleGroups = computed(() =>
     props.source ? groupsForKind(props.source.kind) : []
 )
+const selectedGroupCount = computed(
+    () =>
+        visibleGroups.value.filter((group) => props.groupSelection[group.id])
+            .length
+)
+const bulkScope = ref<BulkTargetScope>('server')
+const failedPortraits = ref<Set<string>>(new Set())
+
+function markPortraitFailed(path: string) {
+    failedPortraits.value = new Set(failedPortraits.value).add(path)
+}
+
+function setAllGroups(value: boolean) {
+    for (const group of visibleGroups.value) emit('setGroup', group.id, value)
+}
 </script>
 
 <template>
@@ -59,13 +81,14 @@ const visibleGroups = computed(() =>
                     class="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded"
                 >
                     <img
-                        v-if="!isBackup(source) && source.character"
+                        v-if="
+                            !isBackup(source) &&
+                            source.character &&
+                            !failedPortraits.has(source.path)
+                        "
                         :src="source.character.portrait_url"
                         class="size-full object-cover"
-                        @error="
-                            ($event.target as HTMLImageElement).style.display =
-                                'none'
-                        "
+                        @error="markPortraitFailed(source.path)"
                     />
                     <Rocket
                         v-else-if="source.kind === 'char'"
@@ -125,6 +148,44 @@ const visibleGroups = computed(() =>
                     {{ t('common.clear') }}
                 </Button>
             </div>
+            <div v-if="source" class="mb-2 flex gap-1">
+                <select
+                    v-model="bulkScope"
+                    class="h-7 min-w-0 flex-1 rounded-md border bg-background px-1.5 text-xs"
+                    :title="t('copyPanel.targetScope')"
+                >
+                    <option value="server" :disabled="!activeServerId">
+                        {{
+                            activeServerId
+                                ? t('copyPanel.currentServer', {
+                                      server: getServerShortName(
+                                          activeServerId
+                                      ),
+                                  })
+                                : t('copyPanel.currentServerUnavailable')
+                        }}
+                    </option>
+                    <option value="all">
+                        {{ t('copyPanel.allServers') }}
+                    </option>
+                </select>
+                <Button
+                    variant="outline"
+                    size="icon"
+                    class="size-7 shrink-0"
+                    :disabled="bulkScope === 'server' && !activeServerId"
+                    :title="
+                        t(
+                            source.kind === 'char'
+                                ? 'copyPanel.addEveryCharacter'
+                                : 'copyPanel.addEveryAccount'
+                        )
+                    "
+                    @click="emit('addAllTargets', bulkScope)"
+                >
+                    <ListPlus class="size-3.5" />
+                </Button>
+            </div>
             <div class="flex-1 overflow-y-auto rounded border bg-background">
                 <div v-if="targets.length" class="divide-y">
                     <div
@@ -136,14 +197,13 @@ const visibleGroups = computed(() =>
                             class="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded"
                         >
                             <img
-                                v-if="target.character"
+                                v-if="
+                                    target.character &&
+                                    !failedPortraits.has(target.path)
+                                "
                                 :src="target.character.portrait_url"
                                 class="size-full object-cover"
-                                @error="
-                                    (
-                                        $event.target as HTMLImageElement
-                                    ).style.display = 'none'
-                                "
+                                @error="markPortraitFailed(target.path)"
                             />
                             <Rocket
                                 v-else-if="target.kind === 'char'"
@@ -170,7 +230,8 @@ const visibleGroups = computed(() =>
                         <Button
                             variant="ghost"
                             size="icon"
-                            class="opacity-0 transition-opacity group-hover:opacity-100"
+                            class="opacity-70 transition-opacity hover:opacity-100 focus:opacity-100"
+                            :title="t('actions.removeTarget')"
                             @click="emit('removeTarget', target)"
                         >
                             <X class="size-3" />
@@ -187,9 +248,30 @@ const visibleGroups = computed(() =>
         </div>
 
         <div v-if="source" class="shrink-0">
-            <span class="mb-1 block text-xs font-medium text-muted-foreground">
-                {{ t('copyPanel.copyOptions') }}
-            </span>
+            <div class="mb-1 flex items-center gap-1">
+                <span class="text-xs font-medium text-muted-foreground">
+                    {{ t('copyPanel.copyOptions') }}
+                    <span class="text-foreground">
+                        ({{ selectedGroupCount }}/{{ visibleGroups.length }})
+                    </span>
+                </span>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    class="ml-auto h-5 px-1.5 text-[10px]"
+                    @click="setAllGroups(true)"
+                >
+                    {{ t('common.all') }}
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-5 px-1.5 text-[10px]"
+                    @click="setAllGroups(false)"
+                >
+                    {{ t('common.none') }}
+                </Button>
+            </div>
             <div
                 class="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded border bg-background p-2"
             >

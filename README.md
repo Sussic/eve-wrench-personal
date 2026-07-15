@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <img alt="CI" src="https://github.com/eve-wrench/eve-wrench-app/actions/workflows/ci.yml/badge.svg">
-  <img alt="Latest release" src="https://img.shields.io/github/v/release/eve-wrench/eve-wrench-app?include_prereleases&sort=semver">
+  <img alt="CI" src="https://github.com/Sussic/eve-wrench-personal/actions/workflows/ci.yml/badge.svg">
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/Sussic/eve-wrench-personal?include_prereleases&sort=semver">
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
@@ -54,8 +54,13 @@ Pick a **source** account or character, add one or more **targets**, and copy in
 one click. Account settings only copy to accounts and character settings only to
 characters; the app enforces it.
 
-**Selective copy.** Everything is copied by default, but each setting group has a
-checkbox: **unchecked groups keep the target's own values.** So you can push your
+Search by character name, corporation, account alias, numeric ID, or profile.
+Bulk targeting defaults to the active server, with an explicit all-server option,
+and any visible search result set can be added in one click.
+
+**Selective copy.** Recommended setting groups start selected, while identity-
+specific groups such as module slots and search history start off. **Unchecked
+groups keep the target's own values.** So you can push your
 overview, window layout, and suppressed dialogs everywhere without wiping a
 character's hand-arranged module slots or typed search history. Only the groups
 you select are touched; caches, per-station state, and edit history never
@@ -103,15 +108,18 @@ survive a reinstall of EVE Wrench.
 Open the ⋯ menu on any **account** and pick **Probe formations** to launch a
 dedicated editor window (with the same custom title bar as the main app).
 
-- **Presets** to start from: **Blank**, **Pinpoint**, **Drifter** (one probe
-  parked behind the Drifter), and a **Directional** set that stacks all 8 probes
-  along one axis (North, South, East, West, Up, Down)
+- **Presets** for practical scanning, including EVE-style pinpoint, an
+  experimental geometry-balanced tetrahedral layout, broad 8/32/64 AU spreads,
+  exact-radius horizontal perch rings, 3D perch shells, and symmetric directional
+  ladders
 - **Holographic 3D scanner** preview: drag to rotate, scroll to zoom anywhere in
   the pane, with compass axes (N/S · W/E · U/D), range rings, and a height tether
   under each probe. Theme-aware, light and dark
-- **Precise editing**: per-probe coordinates in km, discrete scan ranges (0.25 to
-  32 AU), reorder formations, and scale a whole formation (a negative factor
-  shrinks it)
+- **Precise editing**: per-probe coordinates in km or AU, discrete Core and
+  Combat scan ranges from 0.25 to 64 AU, formation reordering, mirroring,
+  rotation, centring, scaling, and undo/redo
+- **EVE-effective guidance**: probe-type compatibility, non-zero-centroid
+  warnings, and a centred preview of the placement EVE will actually recall
 - **Safe saves**: writes re-encode the file losslessly, back it up first, and
   stay in sync live with the main window
 
@@ -121,6 +129,9 @@ Export **all** your settings, backups, and aliases into a single `.zip` archive
 (with a checksummed manifest) to move between machines or share a setup. Importing
 analyzes the archive first, showing new, unchanged, and conflicting files, and
 lets you choose which conflicts to overwrite, backing up anything it replaces.
+The app warns before export because a complete personal archive can include
+aliases, search history, and other preferences; use formation JSON for public
+layout sharing.
 
 ### 🏷️ Identity: portraits & aliases
 
@@ -148,15 +159,14 @@ automatically.
 - **Always Show Bracket Text**: show ship labels on all brackets in space, not
   just selected targets (handy for PvP awareness; may cost performance in 200+
   pilot fights; needs a client restart)
-- **Update notifications**: the app checks GitHub at startup. Stable builds only
-  see stable releases; **preview builds** (a pre-release version, marked with a
-  _Preview_ badge in the title bar) are also told about newer previews
+- **Visible version information** in the title bar; new builds are published on
+  the GitHub Releases page
 
 ---
 
 ## Installation
 
-Grab the latest build from [**Releases**](https://github.com/eve-wrench/eve-wrench-app/releases).
+Grab the latest build from [**Releases**](https://github.com/Sussic/eve-wrench-personal/releases).
 
 | OS          | File                                    | Notes                                                                                                            |
 | ----------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -216,8 +226,8 @@ stable, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) fo
 your OS.
 
 ```bash
-git clone https://github.com/eve-wrench/eve-wrench-app.git
-cd eve-wrench-app
+git clone https://github.com/Sussic/eve-wrench-personal.git
+cd eve-wrench-personal
 npm install
 npm run tauri dev      # run in development
 npm run tauri build    # build a production bundle

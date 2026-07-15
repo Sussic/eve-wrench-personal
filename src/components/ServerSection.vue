@@ -23,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     setSource: [entry: SettingsEntry]
     addTarget: [entry: SettingsEntry]
+    removeTarget: [entry: SettingsEntry]
     backup: [entry: SettingsEntry]
     restore: [entry: SettingsEntry, backup: BackupEntry]
     addAllFromProfile: [profile: ProfileData, kind: SettingsKind]
@@ -43,6 +44,7 @@ const emit = defineEmits<{
             :all-backups="allBackups"
             @set-source="emit('setSource', $event)"
             @add-target="emit('addTarget', $event)"
+            @remove-target="emit('removeTarget', $event)"
             @backup="emit('backup', $event)"
             @restore="(entry, backup) => emit('restore', entry, backup)"
             @add-all-from-profile="(p, k) => emit('addAllFromProfile', p, k)"

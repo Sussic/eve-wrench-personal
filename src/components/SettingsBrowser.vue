@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { Archive, ChevronUp, ChevronDown, Trash2 } from 'lucide-vue-next'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useStorage } from '@vueuse/core'
+import {
+    Archive,
+    ChevronUp,
+    ChevronDown,
+    ListPlus,
+    Search,
+    Trash2,
+    X,
+} from 'lucide-vue-next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
     Table,
     TableBody,
+    TableCell,
     TableHead,
     TableHeader,
     TableRow,
@@ -19,9 +30,11 @@ import type {
     SettingsEntry,
     SettingsKind,
     BackupEntry,
+    ServerId,
 } from '@/types'
 import { getServerColor } from '@/types'
 import { useI18n } from '@/composables/useI18n'
+import { backupMatches, settingsEntryMatches } from '@/lib/settingsSearch'
 
 const props = defineProps<{
     appData: AppData
@@ -34,6 +47,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     setSource: [entry: SettingsEntry]
     addTarget: [entry: SettingsEntry]
+    removeTarget: [entry: SettingsEntry]
     backup: [entry: SettingsEntry]
     restore: [entry: SettingsEntry, backup: BackupEntry]
     applyBackup: [backup: BackupEntry, target: SettingsEntry]
@@ -41,18 +55,44 @@ const emit = defineEmits<{
     setBackupSource: [backup: BackupEntry]
     deleteBackup: [backup: BackupEntry]
     deleteBackups: [backups: BackupEntry[]]
+    addVisibleTargets: [entries: SettingsEntry[]]
+    activeServerChanged: [serverId: ServerId | null]
     refresh: []
     setBracketsAlwaysShow: [serverPath: string, enabled: boolean]
 }>()
 
 const { t } = useI18n()
-const activeTab = ref(props.appData.servers[0]?.info.id || '')
+const activeTab = useStorage<string>(
+    'eve-wrench-active-tab',
+    props.appData.servers[0]?.info.id || ''
+)
+const lastActiveServer = useStorage<ServerId | null>(
+    'eve-wrench-active-server',
+    props.appData.servers[0]?.info.id ?? null
+)
+const searchQuery = ref('')
+
+function focusSearch(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f')
+        return
+    event.preventDefault()
+    document.querySelector<HTMLInputElement>('[data-settings-search]')?.focus()
+}
+
+onMounted(() => window.addEventListener('keydown', focusSearch))
+onUnmounted(() => window.removeEventListener('keydown', focusSearch))
 
 watch(
-    () => props.appData.servers,
-    (servers) => {
+    [() => props.appData.servers, () => props.appData.backups.length],
+    ([servers, backupCount]) => {
+        if (!servers.length && backupCount > 0) {
+            activeTab.value = 'backups'
+            return
+        }
+        const backupTabValid = activeTab.value === 'backups' && backupCount > 0
         if (
             servers.length &&
+            !backupTabValid &&
             !servers.find((s) => s.info.id === activeTab.value)
         ) {
             activeTab.value = servers[0].info.id
@@ -60,6 +100,49 @@ watch(
     },
     { immediate: true }
 )
+
+watch(
+    activeTab,
+    (tab) => {
+        const server = props.appData.servers.find(
+            (candidate) => candidate.info.id === tab
+        )
+        if (server) lastActiveServer.value = server.info.id
+        emit('activeServerChanged', lastActiveServer.value)
+    },
+    { immediate: true }
+)
+
+const filteredServers = computed(() =>
+    props.appData.servers.map((server) => ({
+        ...server,
+        profiles: server.profiles
+            .map((profile) => ({
+                ...profile,
+                accounts: profile.accounts.filter((entry) =>
+                    settingsEntryMatches(entry, profile, searchQuery.value)
+                ),
+                characters: profile.characters.filter((entry) =>
+                    settingsEntryMatches(entry, profile, searchQuery.value)
+                ),
+            }))
+            .filter(
+                (profile) =>
+                    profile.accounts.length > 0 || profile.characters.length > 0
+            ),
+    }))
+)
+
+const activeFilteredServer = computed(() =>
+    filteredServers.value.find((server) => server.info.id === activeTab.value)
+)
+
+const visibleTargetEntries = computed(() => {
+    if (!props.sourceKind || !activeFilteredServer.value) return []
+    return activeFilteredServer.value.profiles.flatMap((profile) =>
+        props.sourceKind === 'char' ? profile.characters : profile.accounts
+    )
+})
 
 type SortColumn = 'name' | 'time'
 type SortDirection = 'asc' | 'desc'
@@ -77,15 +160,27 @@ function toggleBackupSort(col: SortColumn) {
 }
 
 const sortedBackups = computed(() => {
-    return [...props.appData.backups].sort((a, b) => {
-        let cmp = 0
-        if (backupSortCol.value === 'name') {
-            cmp = a.name.localeCompare(b.name)
-        } else {
-            cmp = a.timestamp - b.timestamp
-        }
-        return backupSortDir.value === 'asc' ? cmp : -cmp
-    })
+    return props.appData.backups
+        .filter((backup) => backupMatches(backup, searchQuery.value))
+        .sort((a, b) => {
+            let cmp = 0
+            if (backupSortCol.value === 'name') {
+                cmp = a.name.localeCompare(b.name)
+            } else {
+                cmp = a.timestamp - b.timestamp
+            }
+            return backupSortDir.value === 'asc' ? cmp : -cmp
+        })
+})
+
+const visibleResultCount = computed(() => {
+    if (activeTab.value === 'backups') return sortedBackups.value.length
+    if (!activeFilteredServer.value) return 0
+    return activeFilteredServer.value.profiles.reduce(
+        (count, profile) =>
+            count + profile.accounts.length + profile.characters.length,
+        0
+    )
 })
 
 // ── Backup multi-select ──────────────────────────────────────────────────
@@ -176,16 +271,65 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                         >
                     </TabsTrigger>
                 </TabsList>
+                <div class="mt-3 flex items-center gap-2">
+                    <div class="relative min-w-0 flex-1">
+                        <Search
+                            class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                        />
+                        <Input
+                            v-model="searchQuery"
+                            data-settings-search
+                            class="h-8 pl-8 pr-8"
+                            :placeholder="t('search.placeholder')"
+                            @keyup.escape="searchQuery = ''"
+                        />
+                        <Button
+                            v-if="searchQuery"
+                            variant="ghost"
+                            size="icon"
+                            class="absolute right-0 top-0 size-8"
+                            :title="t('search.clear')"
+                            @click="searchQuery = ''"
+                        >
+                            <X class="size-3.5" />
+                        </Button>
+                    </div>
+                    <span
+                        v-if="searchQuery"
+                        class="shrink-0 text-xs text-muted-foreground"
+                    >
+                        {{ t('search.results', { count: visibleResultCount }) }}
+                    </span>
+                    <Button
+                        v-if="
+                            sourceKind &&
+                            activeTab !== 'backups' &&
+                            visibleTargetEntries.length
+                        "
+                        variant="outline"
+                        size="sm"
+                        class="h-8 shrink-0"
+                        @click="emit('addVisibleTargets', visibleTargetEntries)"
+                    >
+                        <ListPlus class="mr-1.5 size-3.5" />
+                        {{
+                            t('search.addVisible', {
+                                count: visibleTargetEntries.length,
+                            })
+                        }}
+                    </Button>
+                </div>
             </div>
 
             <div class="flex-1 overflow-y-auto p-4">
                 <TabsContent
-                    v-for="server in appData.servers"
+                    v-for="server in filteredServers"
                     :key="server.info.id"
                     :value="server.info.id"
                     class="mt-0"
                 >
                     <ServerSection
+                        v-if="!searchQuery || server.profiles.length > 0"
                         :server="server"
                         :source-kind="sourceKind"
                         :is-source="isSource"
@@ -193,6 +337,7 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                         :all-backups="appData.backups"
                         @set-source="emit('setSource', $event)"
                         @add-target="emit('addTarget', $event)"
+                        @remove-target="emit('removeTarget', $event)"
                         @backup="emit('backup', $event)"
                         @restore="
                             (entry, backup) => emit('restore', entry, backup)
@@ -206,6 +351,12 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                 emit('setBracketsAlwaysShow', path, enabled)
                         "
                     />
+                    <div
+                        v-if="searchQuery && server.profiles.length === 0"
+                        class="py-16 text-center text-sm text-muted-foreground"
+                    >
+                        {{ t('search.noResults') }}
+                    </div>
                 </TabsContent>
 
                 <TabsContent value="backups" class="mt-0">
@@ -319,6 +470,19 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                         toggleBackup(backup.id, $event)
                                     "
                                 />
+                                <TableRow
+                                    v-if="
+                                        searchQuery &&
+                                        sortedBackups.length === 0
+                                    "
+                                >
+                                    <TableCell
+                                        colspan="5"
+                                        class="h-24 text-center font-normal text-muted-foreground"
+                                    >
+                                        {{ t('search.noResults') }}
+                                    </TableCell>
+                                </TableRow>
                             </TableBody>
                         </Table>
                     </div>

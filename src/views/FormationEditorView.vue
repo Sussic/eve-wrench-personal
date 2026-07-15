@@ -9,8 +9,10 @@ import { getAutoBackup } from '@/lib/settingsStore'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Switch } from '@/components/ui/switch'
 import {
     Plus,
     Copy,
@@ -23,19 +25,25 @@ import {
     Upload,
     Undo2,
     Redo2,
+    CircleDot,
+    Radar,
+    SlidersHorizontal,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuSub,
     DropdownMenuSubContent,
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import FormationTitleBar from '@/components/FormationTitleBar.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useWindowChrome } from '@/composables/useWindowChrome'
+import { useConfirm } from '@/composables/useConfirm'
 import type {
     FormationProbe,
     FormationSnapshot,
@@ -43,9 +51,16 @@ import type {
     ProbeFormation,
 } from '@/types'
 import {
-    FORMATION_PRESETS,
+    ALL_SCAN_RANGES,
+    GRID_PRESETS,
+    SCAN_PRESETS,
     STACK_PRESETS,
+    buildFormationProbes,
+    scanRangesFor,
+    type BuilderKind,
+    type FormationAxis,
     type FormationPreset,
+    type ProbeKind,
 } from '@/lib/formationPresets'
 import { useI18n } from '@/composables/useI18n'
 import { useEveRunning } from '@/composables/useEveRunning'
@@ -53,11 +68,16 @@ import {
     AU_KM,
     coordinateForDisplay as convertCoordinateForDisplay,
     coordinateFromDisplay,
+    centredProbePreview,
+    deleteFormationAfterConfirmation,
+    formationCentroid,
     moveFormationWithIds,
+    probeCompatibility,
     type CoordinateUnit,
 } from '@/lib/formationEditorUtils'
 
 const { t } = useI18n()
+const { confirm } = useConfirm()
 const colorMode = useColorMode()
 const { eveRunning } = useEveRunning()
 const { isMac, isMaximized, minimize, toggleMaximize } = useWindowChrome()
@@ -72,7 +92,9 @@ const KM = 1000
 const AU = 149597870700
 const MAX_FORMATIONS = 10
 const MAX_PROBES = 8
-const RANGE_OPTIONS = [0.25, 0.5, 1, 2, 4, 8, 16, 32]
+const RANGE_OPTIONS: number[] = [...ALL_SCAN_RANGES]
+const BUILDER_DISTANCES = [150, 250, 500, 1000, 2500]
+const MIN_PERCH_DISTANCE_KM = 150
 
 // Edit state uses km for positions and AU for ranges; meters on the wire
 type EditProbe = FormationProbe
@@ -107,6 +129,15 @@ const savedFileHash = ref('')
 const diskChanged = ref(false)
 const undoStack = ref<string[]>([])
 const redoStack = ref<string[]>([])
+const showBuilder = ref(false)
+const builderKind = ref<BuilderKind>('ring')
+const builderProbeKind = ref<ProbeKind>('combat')
+const builderRange = ref(0.5)
+const builderDistance = ref(250)
+const builderAxis = ref<FormationAxis>('northSouth')
+const builderName = ref('')
+const pendingDeleteId = ref<number | null>(null)
+const previewCentred = ref(false)
 let unlisten: UnlistenFn | null = null
 let unlistenClose: UnlistenFn | null = null
 let diskPoll: ReturnType<typeof setInterval> | null = null
@@ -118,9 +149,88 @@ const current = computed<EditFormation | null>(
     () => formations.value[selected.value] ?? null
 )
 
+const currentCentroid = computed(() =>
+    formationCentroid(current.value?.probes ?? [])
+)
+const centroidDistance = computed(() =>
+    Math.hypot(
+        currentCentroid.value.x,
+        currentCentroid.value.y,
+        currentCentroid.value.z
+    )
+)
+const hasCentroidOffset = computed(() => centroidDistance.value > 0.001)
+const currentCompatibility = computed(() =>
+    probeCompatibility(current.value?.probes ?? [])
+)
+const previewProbes = computed(() => {
+    const probes = current.value?.probes ?? []
+    return previewCentred.value ? centredProbePreview(probes) : probes
+})
+const hasDuplicateNames = computed(() => {
+    const seen = new Set<string>()
+    return formations.value.some((formation) => {
+        const name = formation.name.trim().toLocaleLowerCase()
+        if (!name) return false
+        if (seen.has(name)) return true
+        seen.add(name)
+        return false
+    })
+})
+const hasExtremeCoordinates = computed(() =>
+    formations.value.some((formation) =>
+        formation.probes.some((probe) =>
+            [probe.x, probe.y, probe.z].some(
+                (coordinate) => Math.abs(coordinate) > AU_KM * 100
+            )
+        )
+    )
+)
+const editorWarning = computed(() => {
+    if (hasDuplicateNames.value) return t('formationEditor.duplicateNames')
+    if (hasExtremeCoordinates.value)
+        return t('formationEditor.extremeCoordinates')
+    return ''
+})
+
 const dirty = computed(
     () => JSON.stringify(formations.value) !== savedSnapshot.value
 )
+
+const builderRangeOptions = computed(() =>
+    scanRangesFor(builderProbeKind.value)
+)
+const builderUsesDistance = computed(() =>
+    ['ring', 'shell', 'ladder'].includes(builderKind.value)
+)
+const builderIsGridLayout = computed(() =>
+    ['ring', 'shell', 'ladder'].includes(builderKind.value)
+)
+const builderDistanceValid = computed(
+    () =>
+        !builderUsesDistance.value ||
+        (Number.isFinite(builderDistance.value) &&
+            builderDistance.value >= MIN_PERCH_DISTANCE_KM)
+)
+const builderSuggestedName = computed(() => {
+    const values = {
+        range: builderRange.value,
+        distance: builderDistance.value.toLocaleString(),
+        axis: t(`formationEditor.presets.${builderAxis.value}`),
+    }
+    return t(`formationEditor.builderNames.${builderKind.value}`, values)
+})
+
+watch(builderProbeKind, () => {
+    const options = builderRangeOptions.value
+    if (options.includes(builderRange.value)) return
+    builderRange.value = options.reduce((closest, value) =>
+        Math.abs(value - builderRange.value) <
+        Math.abs(closest - builderRange.value)
+            ? value
+            : closest
+    )
+})
 
 const validationError = computed(() => {
     if (formations.value.length > MAX_FORMATIONS)
@@ -370,6 +480,49 @@ function addPreset(preset: FormationPreset) {
         probes: preset.probes(),
     })
     selected.value = formations.value.length - 1
+    showBuilder.value = false
+}
+
+function addBuiltFormation() {
+    if (formations.value.length >= MAX_FORMATIONS) return
+    if (
+        !builderRangeOptions.value.includes(builderRange.value) ||
+        !builderDistanceValid.value
+    ) {
+        return
+    }
+    formations.value.push({
+        id: nextFormationId(),
+        name: builderName.value.trim() || builderSuggestedName.value,
+        probes: buildFormationProbes({
+            kind: builderKind.value,
+            rangeAu: builderRange.value,
+            distanceKm: builderDistance.value,
+            axis: builderAxis.value,
+        }),
+    })
+    selected.value = formations.value.length - 1
+    builderName.value = ''
+    showBuilder.value = false
+}
+
+function replaceWithBuiltFormation() {
+    if (
+        !current.value ||
+        !builderRangeOptions.value.includes(builderRange.value) ||
+        !builderDistanceValid.value
+    ) {
+        return
+    }
+    current.value.name = builderName.value.trim() || builderSuggestedName.value
+    current.value.probes = buildFormationProbes({
+        kind: builderKind.value,
+        rangeAu: builderRange.value,
+        distanceKm: builderDistance.value,
+        axis: builderAxis.value,
+    })
+    builderName.value = ''
+    showBuilder.value = false
 }
 
 function duplicateFormation() {
@@ -382,11 +535,30 @@ function duplicateFormation() {
     selected.value = formations.value.length - 1
 }
 
-function deleteFormation() {
-    if (!current.value) return
-    if (!window.confirm(t('formationEditor.confirmDeleteFormation'))) return
-    formations.value.splice(selected.value, 1)
-    selected.value = Math.min(selected.value, formations.value.length - 1)
+async function deleteFormation() {
+    const formation = current.value
+    if (!formation || pendingDeleteId.value !== null) return
+
+    pendingDeleteId.value = formation.id
+    try {
+        const deletedIndex = await deleteFormationAfterConfirmation(
+            formations.value,
+            formation.id,
+            () =>
+                confirm({
+                    title: t('formationEditor.deleteFormation'),
+                    description: t('formationEditor.confirmDeleteFormation', {
+                        name: formation.name,
+                    }),
+                    confirmText: t('dialog.delete'),
+                    destructive: true,
+                })
+        )
+        if (deletedIndex === null) return
+        selected.value = Math.min(deletedIndex, formations.value.length - 1)
+    } finally {
+        pendingDeleteId.value = null
+    }
 }
 
 function moveFormation(i: number, dir: -1 | 1) {
@@ -537,20 +709,13 @@ async function exportAllFormations() {
 
 function centreFormation() {
     if (!current.value?.probes.length) return
-    const center = current.value.probes.reduce(
-        (sum, probe) => ({
-            x: sum.x + probe.x,
-            y: sum.y + probe.y,
-            z: sum.z + probe.z,
-        }),
-        { x: 0, y: 0, z: 0 }
-    )
-    const count = current.value.probes.length
+    const center = formationCentroid(current.value.probes)
     for (const probe of current.value.probes) {
-        probe.x -= center.x / count
-        probe.y -= center.y / count
-        probe.z -= center.z / count
+        probe.x -= center.x
+        probe.y -= center.y
+        probe.z -= center.z
     }
+    previewCentred.value = false
 }
 
 function mirrorFormation(axis: Axis) {
@@ -644,7 +809,8 @@ function onKeyboardShortcut(event: KeyboardEvent) {
     }
 }
 
-// Valid probe scan ranges in EVE: powers of two from 0.25 to 32 AU
+// Union of valid Core and Combat probe ranges. Existing unusual values remain
+// visible so the editor never silently changes an imported file.
 function rangeOptionsFor(value: number): number[] {
     // Keep unusual values from existing files selectable instead of lying
     return RANGE_OPTIONS.includes(value)
@@ -687,6 +853,7 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onProbePointerDown(e: PointerEvent, index: number) {
+    if (previewCentred.value) return
     draggingProbe = index
     selectedProbe.value = index
     lastX = e.clientX
@@ -757,9 +924,8 @@ function project(x: number, y: number, z: number) {
 }
 
 const extent = computed(() => {
-    if (!current.value) return 1
     let max = 1
-    for (const p of current.value.probes) {
+    for (const p of previewProbes.value) {
         max = Math.max(max, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z))
     }
     return max
@@ -856,9 +1022,8 @@ const spokes = computed(() => {
 // Each probe carries a tether down to its equatorial-plane shadow so height
 // (north/south vs up/down) reads at a glance
 const projectedProbes = computed(() => {
-    if (!current.value) return []
     const s = previewScale.value
-    return current.value.probes
+    return previewProbes.value
         .map((p, index) => {
             const top = project(p.x, p.y, p.z)
             const base = project(p.x, 0, p.z)
@@ -890,6 +1055,7 @@ function toggleTheme() {
             rich-colors
             :theme="colorMode === 'dark' ? 'dark' : 'light'"
         />
+        <ConfirmDialog />
 
         <FormationTitleBar
             :title="t('formationEditor.title', { name: displayName })"
@@ -952,7 +1118,8 @@ function toggleTheme() {
                         <span
                             class="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground"
                         >
-                            {{ t('formationEditor.formations') }}
+                            {{ t('formationEditor.formations') }} ·
+                            {{ formations.length }}/{{ MAX_FORMATIONS }}
                         </span>
                         <div class="flex items-center gap-0.5">
                             <Button
@@ -1008,20 +1175,64 @@ function toggleTheme() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="start">
                                     <DropdownMenuItem
-                                        v-for="preset in FORMATION_PRESETS"
-                                        :key="preset.id"
-                                        @select="addPreset(preset)"
+                                        @select="showBuilder = true"
                                     >
-                                        <component
-                                            :is="preset.icon"
+                                        <SlidersHorizontal
                                             class="mr-2 size-4"
                                         />
-                                        {{
-                                            t(
-                                                `formationEditor.presets.${preset.id}`
-                                            )
-                                        }}
+                                        {{ t('formationEditor.openBuilder') }}
                                     </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Radar class="mr-2 size-4" />
+                                            {{
+                                                t('formationEditor.presetScan')
+                                            }}
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <DropdownMenuItem
+                                                v-for="preset in SCAN_PRESETS"
+                                                :key="preset.id"
+                                                @select="addPreset(preset)"
+                                            >
+                                                <component
+                                                    :is="preset.icon"
+                                                    class="mr-2 size-4"
+                                                />
+                                                {{
+                                                    t(
+                                                        `formationEditor.presets.${preset.id}`
+                                                    )
+                                                }}
+                                            </DropdownMenuItem>
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <CircleDot class="mr-2 size-4" />
+                                            {{
+                                                t('formationEditor.presetGrid')
+                                            }}
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <DropdownMenuItem
+                                                v-for="preset in GRID_PRESETS"
+                                                :key="preset.id"
+                                                @select="addPreset(preset)"
+                                            >
+                                                <component
+                                                    :is="preset.icon"
+                                                    class="mr-2 size-4"
+                                                />
+                                                {{
+                                                    t(
+                                                        `formationEditor.presets.${preset.id}`
+                                                    )
+                                                }}
+                                            </DropdownMenuItem>
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
                                     <DropdownMenuSub>
                                         <DropdownMenuSubTrigger>
                                             <Compass class="mr-2 size-4" />
@@ -1065,6 +1276,7 @@ function toggleTheme() {
                                 v-if="current"
                                 variant="ghostDestructive"
                                 size="icon"
+                                :disabled="pendingDeleteId !== null"
                                 :title="t('formationEditor.deleteFormation')"
                                 @click="deleteFormation"
                             >
@@ -1073,7 +1285,238 @@ function toggleTheme() {
                         </div>
                     </div>
                     <div
-                        v-if="!formations.length"
+                        v-if="showBuilder"
+                        class="rounded-lg border bg-background/70 p-3 shadow-sm"
+                    >
+                        <div
+                            class="mb-3 flex items-start justify-between gap-3"
+                        >
+                            <div>
+                                <div class="text-sm font-medium">
+                                    {{ t('formationEditor.builderTitle') }}
+                                </div>
+                                <div
+                                    class="mt-0.5 text-[11px] leading-4 text-muted-foreground"
+                                >
+                                    {{
+                                        t(
+                                            `formationEditor.builderDescriptions.${builderKind}`
+                                        )
+                                    }}
+                                </div>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                :title="t('common.close')"
+                                @click="showBuilder = false"
+                            >
+                                <X class="size-3.5" />
+                            </Button>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <label class="flex flex-col gap-1 text-[11px]">
+                                <span class="text-muted-foreground">
+                                    {{ t('formationEditor.geometry') }}
+                                </span>
+                                <select
+                                    v-model="builderKind"
+                                    class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                    <option value="pinpoint">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.pinpoint'
+                                            )
+                                        }}
+                                    </option>
+                                    <option value="tetrahedral">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.tetrahedral'
+                                            )
+                                        }}
+                                    </option>
+                                    <option value="spread">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.spread'
+                                            )
+                                        }}
+                                    </option>
+                                    <option value="ring">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.ring'
+                                            )
+                                        }}
+                                    </option>
+                                    <option value="shell">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.shell'
+                                            )
+                                        }}
+                                    </option>
+                                    <option value="ladder">
+                                        {{
+                                            t(
+                                                'formationEditor.geometryOptions.ladder'
+                                            )
+                                        }}
+                                    </option>
+                                </select>
+                            </label>
+                            <label class="flex flex-col gap-1 text-[11px]">
+                                <span class="text-muted-foreground">
+                                    {{ t('formationEditor.probeType') }}
+                                </span>
+                                <select
+                                    v-model="builderProbeKind"
+                                    class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                    <option value="core">
+                                        {{ t('formationEditor.coreProbes') }}
+                                    </option>
+                                    <option value="combat">
+                                        {{ t('formationEditor.combatProbes') }}
+                                    </option>
+                                </select>
+                            </label>
+                            <label class="flex flex-col gap-1 text-[11px]">
+                                <span class="text-muted-foreground">
+                                    {{ t('formationEditor.scanRange') }}
+                                </span>
+                                <select
+                                    v-model.number="builderRange"
+                                    class="h-8 rounded-md border border-input bg-background px-2 font-mono text-xs"
+                                >
+                                    <option
+                                        v-for="range in builderRangeOptions"
+                                        :key="range"
+                                        :value="range"
+                                    >
+                                        {{ range }} AU
+                                    </option>
+                                </select>
+                            </label>
+                            <label
+                                v-if="builderKind === 'ladder'"
+                                class="flex flex-col gap-1 text-[11px]"
+                            >
+                                <span class="text-muted-foreground">
+                                    {{ t('formationEditor.axis') }}
+                                </span>
+                                <select
+                                    v-model="builderAxis"
+                                    class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                    <option
+                                        v-for="axis in [
+                                            'northSouth',
+                                            'westEast',
+                                            'upDown',
+                                        ]"
+                                        :key="axis"
+                                        :value="axis"
+                                    >
+                                        {{
+                                            t(`formationEditor.presets.${axis}`)
+                                        }}
+                                    </option>
+                                </select>
+                            </label>
+                            <label
+                                v-if="builderUsesDistance"
+                                class="flex flex-col gap-1 text-[11px]"
+                                :class="
+                                    builderKind !== 'ladder' && 'col-span-1'
+                                "
+                            >
+                                <span class="text-muted-foreground">
+                                    {{
+                                        t(
+                                            builderKind === 'ladder'
+                                                ? 'formationEditor.spacingKm'
+                                                : 'formationEditor.radiusKm'
+                                        )
+                                    }}
+                                </span>
+                                <input
+                                    v-model.number="builderDistance"
+                                    type="number"
+                                    :min="MIN_PERCH_DISTANCE_KM"
+                                    step="50"
+                                    class="h-8 rounded-md border border-input bg-background px-2 font-mono text-xs"
+                                />
+                            </label>
+                            <label
+                                class="col-span-2 flex flex-col gap-1 text-[11px]"
+                            >
+                                <span class="text-muted-foreground">
+                                    {{ t('formationEditor.nameOptional') }}
+                                </span>
+                                <Input
+                                    v-model="builderName"
+                                    maxlength="64"
+                                    :placeholder="builderSuggestedName"
+                                    class="h-8 text-xs"
+                                />
+                            </label>
+                        </div>
+
+                        <div
+                            v-if="builderUsesDistance"
+                            class="mt-2 flex flex-wrap gap-1"
+                        >
+                            <Button
+                                v-for="distance in BUILDER_DISTANCES"
+                                :key="distance"
+                                size="sm"
+                                :variant="
+                                    builderDistance === distance
+                                        ? 'default'
+                                        : 'outline'
+                                "
+                                class="h-6 px-2 font-mono text-[10px]"
+                                @click="builderDistance = distance"
+                            >
+                                {{ distance.toLocaleString() }} km
+                            </Button>
+                        </div>
+
+                        <div
+                            v-if="builderIsGridLayout"
+                            class="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2 text-[10px] leading-4 text-amber-800 dark:text-amber-300"
+                        >
+                            {{ t('formationEditor.gridBookmarkWarning') }}
+                        </div>
+
+                        <div class="mt-3 grid grid-cols-2 gap-2">
+                            <Button
+                                size="sm"
+                                :disabled="
+                                    formations.length >= MAX_FORMATIONS ||
+                                    !builderDistanceValid
+                                "
+                                @click="addBuiltFormation"
+                            >
+                                <Plus class="mr-2 size-3.5" />
+                                {{ t('formationEditor.addBuiltFormation') }}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                :disabled="!current || !builderDistanceValid"
+                                @click="replaceWithBuiltFormation"
+                            >
+                                {{ t('formationEditor.replaceSelected') }}
+                            </Button>
+                        </div>
+                    </div>
+                    <div
+                        v-else-if="!formations.length"
                         class="py-4 text-center text-sm text-muted-foreground"
                     >
                         {{ t('formationEditor.noFormations') }}
@@ -1139,6 +1582,48 @@ function toggleTheme() {
                             </span>
                         </div>
                     </div>
+                </section>
+
+                <section
+                    v-if="current"
+                    class="flex flex-wrap items-center gap-2 border-b px-4 py-2"
+                >
+                    <Badge variant="outline" class="text-[10px]">
+                        {{
+                            t(
+                                `formationEditor.compatibility.${currentCompatibility}`
+                            )
+                        }}
+                    </Badge>
+                    <span
+                        v-if="hasCentroidOffset"
+                        class="min-w-0 flex-1 text-[10px] leading-4 text-amber-700 dark:text-amber-300"
+                    >
+                        {{
+                            t('formationEditor.centroidWarning', {
+                                distance: formatDistance(centroidDistance),
+                            })
+                        }}
+                    </span>
+                    <span
+                        v-else
+                        class="min-w-0 flex-1 text-[10px] text-muted-foreground"
+                    >
+                        {{ t('formationEditor.centroidReady') }}
+                    </span>
+                    <Button
+                        v-if="hasCentroidOffset"
+                        variant="outline"
+                        size="sm"
+                        class="h-6 px-2 text-[10px]"
+                        @click="centreFormation"
+                    >
+                        {{ t('formationEditor.centreNow') }}
+                    </Button>
+                    <label class="flex items-center gap-1.5 text-[10px]">
+                        <Switch v-model="previewCentred" />
+                        {{ t('formationEditor.effectivePreview') }}
+                    </label>
                 </section>
 
                 <!-- Probes -->
@@ -1380,6 +1865,12 @@ function toggleTheme() {
                         {{ validationError }}
                     </span>
                     <span
+                        v-else-if="editorWarning"
+                        class="text-[11px] text-amber-600 dark:text-amber-300"
+                    >
+                        {{ editorWarning }}
+                    </span>
+                    <span
                         v-else-if="dirty"
                         class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
                     >
@@ -1592,6 +2083,9 @@ function toggleTheme() {
                         >{{ t('formationEditor.zoom') }}
                         {{ Math.round(zoom * 100) }}%</span
                     >
+                    <span v-if="previewCentred">
+                        {{ t('formationEditor.effectivePreviewActive') }}
+                    </span>
                 </div>
 
                 <label

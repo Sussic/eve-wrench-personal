@@ -1,0 +1,36 @@
+EVE Wrench Personal v0.3.5 cumulative overlay
+
+This overlay includes every personal-fork change through v0.3.5. It can be
+extracted over the repository even if an earlier incremental patch no longer
+applies cleanly.
+
+After extraction, run:
+
+  APPLY-v0.3.5.cmd
+  npm install
+  npm run format:check
+  npm test
+  npm run lint:check
+  npm run typecheck
+  npm run knip
+  cargo fmt --all --manifest-path src-tauri\Cargo.toml
+  cargo test --manifest-path src-tauri\Cargo.toml
+  cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
+  npm run tauri build
+
+The production executable is:
+
+  src-tauri\target\release\eve-wrench.exe
+
+Important v0.3.5 changes:
+
+- unique backup identities, including same-second multi-target backups
+- verify, back up, and roll back whole-settings imports safely
+- refresh-safe source and target selections
+- character/account/backup search with Add visible
+- current-server bulk targeting by default; all servers is explicit
+- target toggle buttons and clearer copy-category controls/confirmation
+- persistent language, active server tab, and copy-category choices
+- probe compatibility, centroid warning, effective EVE preview, and Replace selected
+- visible alias errors, portrait fallbacks, version display, and updated public docs
+

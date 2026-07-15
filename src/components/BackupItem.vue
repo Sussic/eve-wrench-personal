@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { TableCell, TableRow } from '@/components/ui/table'
 import {
@@ -20,6 +21,7 @@ import {
     ArrowDownToLine,
 } from 'lucide-vue-next'
 import type { BackupEntry, SettingsEntry } from '@/types'
+import { getServerColor, getServerShortName } from '@/types'
 import { useI18n } from '@/composables/useI18n'
 
 const { t } = useI18n()
@@ -63,10 +65,34 @@ const emit = defineEmits<{
         </TableCell>
         <TableCell>
             <div class="flex flex-col">
-                <span>{{ backup.name }}</span>
-                <span class="text-xs text-muted-foreground">{{
-                    backup.original_name || backup.original_id
-                }}</span>
+                <div class="flex items-center gap-1.5">
+                    <span>{{ backup.name }}</span>
+                    <Badge
+                        v-if="backup.name.startsWith('pre-')"
+                        variant="secondary"
+                        class="px-1 py-0 text-[9px]"
+                    >
+                        {{ t('backup.automatic') }}
+                    </Badge>
+                </div>
+                <div
+                    class="flex items-center gap-1.5 text-xs text-muted-foreground"
+                >
+                    <span>{{
+                        backup.original_name || backup.original_id
+                    }}</span>
+                    <span>· {{ backup.profile }}</span>
+                    <Badge
+                        variant="outline"
+                        class="px-1 py-0 text-[9px]"
+                        :style="{
+                            borderColor: getServerColor(backup.server),
+                            color: getServerColor(backup.server),
+                        }"
+                    >
+                        {{ getServerShortName(backup.server) }}
+                    </Badge>
+                </div>
             </div>
         </TableCell>
         <TableCell class="text-muted-foreground">{{

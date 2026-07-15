@@ -18,7 +18,7 @@ const { isOpen, options, handleConfirm, handleCancel } = useConfirm()
         <AlertDialogContent>
             <AlertDialogHeader>
                 <AlertDialogTitle>{{ options.title }}</AlertDialogTitle>
-                <AlertDialogDescription>{{
+                <AlertDialogDescription class="whitespace-pre-line">{{
                     options.description
                 }}</AlertDialogDescription>
             </AlertDialogHeader>

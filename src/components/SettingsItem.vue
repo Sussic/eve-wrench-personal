@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,6 +32,7 @@ import {
 } from 'lucide-vue-next'
 import type { SettingsEntry, SettingsKind, BackupEntry } from '@/types'
 import { useI18n } from '@/composables/useI18n'
+import { toast } from 'vue-sonner'
 
 const { t } = useI18n()
 
@@ -46,6 +47,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     setSource: [entry: SettingsEntry]
     addTarget: [entry: SettingsEntry]
+    removeTarget: [entry: SettingsEntry]
     backup: [entry: SettingsEntry]
     restore: [entry: SettingsEntry, backup: BackupEntry]
     aliasChanged: []
@@ -56,6 +58,11 @@ const canEditAlias = computed(() => !props.entry.character)
 
 const editing = ref(false)
 const aliasInput = ref(props.entry.alias || '')
+const portraitFailed = ref(false)
+watch(
+    () => props.entry.character?.portrait_url,
+    () => (portraitFailed.value = false)
+)
 
 async function saveAlias() {
     const newAlias = aliasInput.value.trim() || null
@@ -67,7 +74,7 @@ async function saveAlias() {
         editing.value = false
         emit('aliasChanged')
     } catch (e) {
-        console.error('Failed to save alias:', e)
+        toast.error(t('toast.aliasSaveFailed'), { description: String(e) })
     }
 }
 
@@ -94,13 +101,10 @@ function startEdit() {
                 class="flex size-6 items-center justify-center overflow-hidden rounded"
             >
                 <img
-                    v-if="isCharacter && entry.character"
+                    v-if="isCharacter && entry.character && !portraitFailed"
                     :src="entry.character.portrait_url"
                     class="size-full object-cover"
-                    @error="
-                        ($event.target as HTMLImageElement).style.display =
-                            'none'
-                    "
+                    @error="portraitFailed = true"
                 />
                 <Rocket
                     v-else-if="isCharacter"
@@ -183,13 +187,18 @@ function startEdit() {
                             variant="ghost"
                             size="icon"
                             :disabled="!sourceKind || sourceKind !== entry.kind"
-                            @click="emit('addTarget', entry)"
+                            @click="
+                                isTarget
+                                    ? emit('removeTarget', entry)
+                                    : emit('addTarget', entry)
+                            "
                         >
-                            <ArrowDownToLine class="size-4" />
+                            <X v-if="isTarget" class="size-4" />
+                            <ArrowDownToLine v-else class="size-4" />
                         </Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{{
-                        t('actions.target')
+                        t(isTarget ? 'actions.removeTarget' : 'actions.target')
                     }}</TooltipContent>
                 </Tooltip>
                 <DropdownMenu>
