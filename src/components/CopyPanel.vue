@@ -3,7 +3,15 @@ import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { User, Rocket, ArrowDown, X, Copy, ListPlus } from 'lucide-vue-next'
+import {
+    User,
+    Rocket,
+    ArrowDown,
+    X,
+    Copy,
+    ListPlus,
+    Dices,
+} from 'lucide-vue-next'
 import type {
     BulkTargetScope,
     ServerId,
@@ -18,6 +26,7 @@ const props = defineProps<{
     source: SourceItem | null
     targets: SettingsEntry[]
     canCopy: boolean
+    canCreateFormationVariants: boolean
     copying: boolean
     groupSelection: Record<string, boolean>
     activeServerId: ServerId | null
@@ -29,6 +38,7 @@ const emit = defineEmits<{
     clearTargets: []
     addAllTargets: [scope: BulkTargetScope]
     executeCopy: []
+    createFormationVariants: []
     setGroup: [id: string, value: boolean]
 }>()
 
@@ -294,13 +304,29 @@ function setAllGroups(value: boolean) {
             </p>
         </div>
 
-        <Button
-            class="shrink-0 gap-2"
-            :disabled="!canCopy"
-            @click="emit('executeCopy')"
-        >
-            <Copy class="size-4" />
-            {{ copying ? t('copyPanel.copying') : t('copyPanel.copySettings') }}
-        </Button>
+        <div class="grid shrink-0 gap-2">
+            <Button
+                v-if="source && !isBackup(source) && source.kind === 'user'"
+                variant="outline"
+                class="gap-2"
+                :disabled="!canCreateFormationVariants"
+                @click="emit('createFormationVariants')"
+            >
+                <Dices class="size-4" />
+                {{ t('copyPanel.probeVariants') }}
+            </Button>
+            <Button
+                class="gap-2"
+                :disabled="!canCopy"
+                @click="emit('executeCopy')"
+            >
+                <Copy class="size-4" />
+                {{
+                    copying
+                        ? t('copyPanel.copying')
+                        : t('copyPanel.copySettings')
+                }}
+            </Button>
+        </div>
     </aside>
 </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -23,10 +24,14 @@ import {
 import type { BackupEntry, SettingsEntry } from '@/types'
 import { getServerColor, getServerShortName } from '@/types'
 import { useI18n } from '@/composables/useI18n'
+import {
+    backupReasonKey,
+    formatBackupTimestamp,
+} from '@/lib/backupPresentation'
 
 const { t } = useI18n()
 
-defineProps<{
+const props = defineProps<{
     backup: BackupEntry
     isSource: boolean
     selected: boolean
@@ -39,6 +44,11 @@ const emit = defineEmits<{
     apply: [backup: BackupEntry, target: SettingsEntry]
     toggleSelect: [checked: boolean]
 }>()
+
+const reasonKey = computed(() => backupReasonKey(props.backup.name))
+const reason = computed(() =>
+    reasonKey.value ? t(`backup.reasons.${reasonKey.value}`) : props.backup.name
+)
 </script>
 
 <template>
@@ -63,23 +73,28 @@ const emit = defineEmits<{
                 <User v-else class="size-4 text-muted-foreground" />
             </div>
         </TableCell>
+        <TableCell class="whitespace-nowrap">
+            <div class="text-xs font-medium">
+                {{ formatBackupTimestamp(backup.timestamp) }}
+            </div>
+            <div class="text-[10px] text-muted-foreground">
+                {{ backup.relative_time }}
+            </div>
+        </TableCell>
         <TableCell>
             <div class="flex flex-col">
                 <div class="flex items-center gap-1.5">
-                    <span>{{ backup.name }}</span>
-                    <Badge
-                        v-if="backup.name.startsWith('pre-')"
-                        variant="secondary"
-                        class="px-1 py-0 text-[9px]"
-                    >
-                        {{ t('backup.automatic') }}
-                    </Badge>
+                    <span>{{
+                        backup.original_name || backup.original_id
+                    }}</span>
                 </div>
                 <div
                     class="flex items-center gap-1.5 text-xs text-muted-foreground"
                 >
                     <span>{{
-                        backup.original_name || backup.original_id
+                        backup.kind === 'char'
+                            ? t('list.characters')
+                            : t('list.accounts')
                     }}</span>
                     <span>· {{ backup.profile }}</span>
                     <Badge
@@ -95,9 +110,21 @@ const emit = defineEmits<{
                 </div>
             </div>
         </TableCell>
-        <TableCell class="text-muted-foreground">{{
-            backup.relative_time
-        }}</TableCell>
+        <TableCell>
+            <div class="flex items-center gap-1.5 text-sm">
+                <span>{{ reason }}</span>
+                <Badge
+                    v-if="reasonKey"
+                    variant="secondary"
+                    class="px-1 py-0 text-[9px]"
+                >
+                    {{ t('backup.automatic') }}
+                </Badge>
+            </div>
+            <div v-if="reasonKey" class="text-[10px] text-muted-foreground">
+                {{ backup.name }}
+            </div>
+        </TableCell>
         <TableCell class="w-12 text-right">
             <DropdownMenu>
                 <DropdownMenuTrigger as-child>

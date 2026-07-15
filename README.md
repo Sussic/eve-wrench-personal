@@ -93,15 +93,21 @@ migrate, and every target is backed up first.
 
 ### 💾 Backups
 
+- **Disaster recovery snapshots**: **Backup all now** protects every live account,
+  character, profile preference, and alias in one checksummed archive stored
+  outside CCP's EVE folder; **Restore all** creates a rescue snapshot first
 - **Create** named backups from the ⋯ menu on any account or character
 - **Restore** a backup to its original entity, or **apply** it to any compatible one
-- **Bulk manage** in the Backups tab: sort by name or time, select multiple, and
-  delete in one action
+- **Understand the history** at a glance: absolute timestamps, account or
+  character name, server/profile, and plain-language reasons for automatic backups
+- **Bulk manage** in the Backups & Recovery tab: sort by reason or time, select
+  multiple, and delete in one action
 - **Automatic backups before changes**: toggle _"Back up before changes"_ in the
   settings menu (on by default); it guards selective copies and formation edits
 
-Backups live inside EVE's own settings folders, so they're easy to find and
-survive a reinstall of EVE Wrench.
+Individual rollback backups live beside their EVE profile. Full disaster-recovery
+snapshots live under EVE Wrench's application data, outside the CCP/EVE settings
+tree, and the ten newest snapshots are retained.
 
 ### 🛰️ Probe formation editor
 
@@ -111,7 +117,11 @@ dedicated editor window (with the same custom title bar as the main app).
 - **Presets** for practical scanning, including EVE-style pinpoint, an
   experimental geometry-balanced tetrahedral layout, broad 8/32/64 AU spreads,
   exact-radius horizontal perch rings, 3D perch shells, and symmetric directional
-  ladders
+  ladders, plus flattened Drifter O and Drifter I layouts with a zero N/S axis
+- **Per-account variants**: copy the complete source formation pack to many
+  accounts while applying a bounded, deterministic ±km change only to selected
+  perch layouts. The generated jitter stays zero-centred, so EVE's formation
+  centring does not erase the difference; unchecked layouts copy exactly
 - **Holographic 3D scanner** preview: drag to rotate, scroll to zoom anywhere in
   the pane, with compass axes (N/S · W/E · U/D), range rings, and a height tether
   under each probe. Theme-aware, light and dark

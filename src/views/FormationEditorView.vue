@@ -54,6 +54,7 @@ import {
     ALL_SCAN_RANGES,
     GRID_PRESETS,
     SCAN_PRESETS,
+    SPECIAL_PRESETS,
     STACK_PRESETS,
     buildFormationProbes,
     scanRangesFor,
@@ -1183,6 +1184,33 @@ function toggleTheme() {
                                         {{ t('formationEditor.openBuilder') }}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Crosshair class="mr-2 size-4" />
+                                            {{
+                                                t(
+                                                    'formationEditor.presetSpecial'
+                                                )
+                                            }}
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <DropdownMenuItem
+                                                v-for="preset in SPECIAL_PRESETS"
+                                                :key="preset.id"
+                                                @select="addPreset(preset)"
+                                            >
+                                                <component
+                                                    :is="preset.icon"
+                                                    class="mr-2 size-4"
+                                                />
+                                                {{
+                                                    t(
+                                                        `formationEditor.presets.${preset.id}`
+                                                    )
+                                                }}
+                                            </DropdownMenuItem>
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
                                     <DropdownMenuSub>
                                         <DropdownMenuSubTrigger>
                                             <Radar class="mr-2 size-4" />

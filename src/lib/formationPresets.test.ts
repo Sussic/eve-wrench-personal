@@ -3,6 +3,8 @@ import { AU_KM } from './formationEditorUtils'
 import {
     ALL_SCAN_RANGES,
     buildDirectionalLadder,
+    buildDrifterIFlat,
+    buildDrifterOFlat,
     buildGridRing,
     buildGridShell,
     buildPinpoint,
@@ -126,5 +128,24 @@ describe('formation preset geometry', () => {
             expect(centre.y).toBeCloseTo(0, 10)
             expect(centre.z).toBeCloseTo(0, 10)
         }
+    })
+
+    it('keeps both supplied Drifter layouts flat on the N/S axis', () => {
+        const outer = buildDrifterOFlat()
+        const inner = buildDrifterIFlat()
+
+        expect(outer).toEqual([
+            { x: 11272.192, y: 2736.128, z: 0, range: 0.5 },
+            { x: -11272.192, y: -2736.128, z: 0, range: 0.5 },
+            { x: 0, y: 0, z: 0, range: 32 },
+            { x: 0, y: 0, z: 0, range: 32 },
+        ])
+        expect(inner).toEqual([
+            { x: 10682.368, y: 4882.432, z: 0, range: 0.5 },
+            { x: -10682.368, y: -4882.432, z: 0, range: 0.5 },
+        ])
+        expect([...outer, ...inner].every((probe) => probe.z === 0)).toBe(true)
+        expect(centroid(outer)).toEqual({ x: 0, y: 0, z: 0 })
+        expect(centroid(inner)).toEqual({ x: 0, y: 0, z: 0 })
     })
 })

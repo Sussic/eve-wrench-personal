@@ -332,6 +332,7 @@ fn settings_path_context(path: &Path) -> Result<(Server, String), String> {
 pub struct AppData {
     pub servers: Vec<ServerData>,
     pub backups: Vec<BackupEntry>,
+    pub recovery_snapshots: Vec<RecoverySnapshot>,
 }
 
 fn eve_settings_root(custom_path: Option<&str>) -> Option<PathBuf> {
@@ -935,7 +936,12 @@ pub async fn get_app_data(
         }
     }
 
-    Ok(AppData { servers, backups })
+    let recovery_snapshots = scan_recovery_snapshots(&app)?;
+    Ok(AppData {
+        servers,
+        backups,
+        recovery_snapshots,
+    })
 }
 
 // ── Probe formations ─────────────────────────────────────────────────────
@@ -1583,6 +1589,178 @@ pub fn write_probe_formations(
     Ok(FormationWriteResult { file_sha256 })
 }
 
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct FormationVariationAxes {
+    pub north_south: bool,
+    pub west_east: bool,
+    pub up_down: bool,
+}
+
+fn deterministic_variation(seed: &str) -> f64 {
+    let digest = Sha256::digest(seed.as_bytes());
+    let bytes: [u8; 8] = digest[..8]
+        .try_into()
+        .expect("SHA-256 prefix has eight bytes");
+    let fraction = u64::from_be_bytes(bytes) as f64 / u64::MAX as f64;
+    fraction * 2.0 - 1.0
+}
+
+fn centred_axis_variations(
+    target_key: &str,
+    formation: &ProbeFormation,
+    axis: &str,
+    probe_count: usize,
+    maximum_meters: f64,
+) -> Vec<f64> {
+    if probe_count == 0 || maximum_meters == 0.0 {
+        return vec![0.0; probe_count];
+    }
+    let mut values: Vec<f64> = (0..probe_count)
+        .map(|probe_index| {
+            deterministic_variation(&format!(
+                "{}|{}|{}|{}|{}",
+                target_key, formation.id, formation.name, probe_index, axis
+            )) * maximum_meters
+        })
+        .collect();
+    let mean = values.iter().sum::<f64>() / probe_count as f64;
+    for value in &mut values {
+        *value -= mean;
+    }
+    // Subtracting the mean preserves the centroid but can make one value
+    // larger than the requested bound. Scale the whole axis back inside it.
+    let largest = values
+        .iter()
+        .fold(0.0_f64, |max, value| max.max(value.abs()));
+    if largest > maximum_meters {
+        let scale = maximum_meters / largest;
+        for value in &mut values {
+            *value *= scale;
+        }
+    }
+    values
+}
+
+fn vary_probe_formations(
+    formations: &[ProbeFormation],
+    target_key: &str,
+    varied_formation_ids: &HashSet<i64>,
+    maximum_meters: f64,
+    axes: FormationVariationAxes,
+) -> Vec<ProbeFormation> {
+    formations
+        .iter()
+        .map(|formation| {
+            if !varied_formation_ids.contains(&formation.id) {
+                return formation.clone();
+            }
+            let count = formation.probes.len();
+            let x = if axes.west_east {
+                centred_axis_variations(target_key, formation, "x", count, maximum_meters)
+            } else {
+                vec![0.0; count]
+            };
+            let y = if axes.up_down {
+                centred_axis_variations(target_key, formation, "y", count, maximum_meters)
+            } else {
+                vec![0.0; count]
+            };
+            let z = if axes.north_south {
+                centred_axis_variations(target_key, formation, "z", count, maximum_meters)
+            } else {
+                vec![0.0; count]
+            };
+            let mut varied = formation.clone();
+            for (index, probe) in varied.probes.iter_mut().enumerate() {
+                probe.x += x[index];
+                probe.y += y[index];
+                probe.z += z[index];
+            }
+            varied
+        })
+        .collect()
+}
+
+fn variation_target_key(path: &Path) -> Result<String, String> {
+    let (_, id) = parse_core_filename(path)?;
+    let (server, profile) = settings_path_context(path)?;
+    Ok(format!("{:?}|{}|{}", server, profile, id))
+}
+
+#[tauri::command]
+pub fn copy_probe_formations_varied(
+    app: tauri::AppHandle,
+    source_path: String,
+    target_paths: Vec<String>,
+    varied_formation_ids: Vec<i64>,
+    variability_km: f64,
+    axes: FormationVariationAxes,
+    backup: Option<bool>,
+) -> Result<BatchMutationResult, String> {
+    ensure_eve_closed()?;
+    if !variability_km.is_finite() || !(0.0..=100_000.0).contains(&variability_km) {
+        return Err("Variability must be between 0 and 100,000 km".into());
+    }
+    if !axes.north_south && !axes.west_east && !axes.up_down && variability_km > 0.0 {
+        return Err("Select at least one variability axis".into());
+    }
+
+    let source = Path::new(&source_path);
+    let (source_kind, _) = parse_core_filename(source)?;
+    if source_kind != "user" {
+        return Err("Probe formations are stored in account settings files".into());
+    }
+    let source_formations = read_formations_from_file(source)?.formations;
+    validate_formations(&source_formations)?;
+    let varied_ids: HashSet<i64> = varied_formation_ids.into_iter().collect();
+    if !varied_ids.iter().all(|id| {
+        source_formations
+            .iter()
+            .any(|formation| formation.id == *id)
+    }) {
+        return Err("A selected formation no longer exists in the source file".into());
+    }
+
+    let mut batch = BatchMutationResult::default();
+    for target_path in target_paths {
+        let path = Path::new(&target_path);
+        let outcome = (|| -> Result<(), String> {
+            if path == source {
+                return Err("Source and target are the same file".into());
+            }
+            let (target_kind, _) = parse_core_filename(path)?;
+            if target_kind != "user" {
+                return Err("Probe formations can only be applied to account settings".into());
+            }
+            let target_key = variation_target_key(path)?;
+            let formations = vary_probe_formations(
+                &source_formations,
+                &target_key,
+                &varied_ids,
+                variability_km * 1000.0,
+                axes,
+            );
+            if backup.unwrap_or(true) {
+                auto_backup(path, "pre-formation-variants")?;
+            }
+            write_formations_to_file(path, &formations, None)?;
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => batch.succeeded.push(target_path),
+            Err(error) => batch.failed.push(MutationFailure {
+                path: target_path,
+                error,
+            }),
+        }
+    }
+    if !batch.succeeded.is_empty() {
+        emit_data_changed(&app);
+    }
+    Ok(batch)
+}
+
 #[tauri::command]
 pub fn export_probe_formation(
     export_path: String,
@@ -1742,6 +1920,98 @@ mod formation_tests {
         };
 
         assert!(validate_formations(&[formation]).is_ok());
+    }
+
+    #[test]
+    fn formation_variability_is_stable_bounded_and_zero_centred() {
+        let formation = ProbeFormation {
+            id: 4,
+            name: "Perch cube".to_string(),
+            probes: vec![
+                FormationProbe {
+                    x: -250_000.0,
+                    y: -250_000.0,
+                    z: -250_000.0,
+                    range: 0.5 * AU_METERS,
+                },
+                FormationProbe {
+                    x: 250_000.0,
+                    y: 250_000.0,
+                    z: 250_000.0,
+                    range: 0.5 * AU_METERS,
+                },
+                FormationProbe {
+                    x: -250_000.0,
+                    y: 250_000.0,
+                    z: 250_000.0,
+                    range: 0.5 * AU_METERS,
+                },
+                FormationProbe {
+                    x: 250_000.0,
+                    y: -250_000.0,
+                    z: -250_000.0,
+                    range: 0.5 * AU_METERS,
+                },
+            ],
+        };
+        let ids = HashSet::from([formation.id]);
+        let axes = FormationVariationAxes {
+            north_south: false,
+            west_east: true,
+            up_down: true,
+        };
+        let first = vary_probe_formations(
+            std::slice::from_ref(&formation),
+            "TQ|Default|42",
+            &ids,
+            40_000.0,
+            axes,
+        );
+        let second = vary_probe_formations(
+            std::slice::from_ref(&formation),
+            "TQ|Default|42",
+            &ids,
+            40_000.0,
+            axes,
+        );
+        assert_eq!(first, second);
+
+        for (original, varied) in formation.probes.iter().zip(&first[0].probes) {
+            assert!((varied.x - original.x).abs() <= 40_000.0 + 1e-6);
+            assert!((varied.y - original.y).abs() <= 40_000.0 + 1e-6);
+            assert_eq!(varied.z, original.z);
+        }
+        let x_delta_sum: f64 = formation
+            .probes
+            .iter()
+            .zip(&first[0].probes)
+            .map(|(original, varied)| varied.x - original.x)
+            .sum();
+        let y_delta_sum: f64 = formation
+            .probes
+            .iter()
+            .zip(&first[0].probes)
+            .map(|(original, varied)| varied.y - original.y)
+            .sum();
+        assert!(x_delta_sum.abs() < 1e-6);
+        assert!(y_delta_sum.abs() < 1e-6);
+    }
+
+    #[test]
+    fn unchecked_formations_copy_exactly_when_building_variants() {
+        let formations = sample_formations();
+        let varied = vary_probe_formations(
+            &formations,
+            "TQ|Default|42",
+            &HashSet::new(),
+            40_000.0,
+            FormationVariationAxes {
+                north_south: true,
+                west_east: true,
+                up_down: true,
+            },
+        );
+        assert_eq!(formations, varied);
     }
 
     #[test]
@@ -2061,6 +2331,10 @@ pub struct ManifestFileEntry {
 pub struct ExportManifest {
     pub app_version: String,
     pub timestamp: u64,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub recovery_snapshot: bool,
     pub files: Vec<ManifestFileEntry>,
 }
 
@@ -2068,6 +2342,27 @@ pub struct ExportManifest {
 pub struct ExportResult {
     pub file_count: usize,
     pub path: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct RecoverySnapshot {
+    pub id: String,
+    pub label: String,
+    pub timestamp: u64,
+    pub relative_time: String,
+    pub file_count: usize,
+    pub account_count: usize,
+    pub character_count: usize,
+    pub profile_count: usize,
+    pub size_bytes: u64,
+    pub app_version: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct RecoveryRestoreResult {
+    pub restored_count: usize,
+    pub unchanged_count: usize,
+    pub rescue_snapshot: RecoverySnapshot,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -2291,7 +2586,10 @@ fn remove_import_safety_backups(backups: &[ImportSafetyBackup], include_permanen
     }
 }
 
-fn collect_exportable_files(eve_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
+fn collect_exportable_files(
+    eve_root: &Path,
+    include_backups: bool,
+) -> Result<Vec<(PathBuf, String)>, String> {
     let mut files: Vec<(PathBuf, String)> = Vec::new();
 
     let server_dirs = fs::read_dir(eve_root).map_err(|e| e.to_string())?;
@@ -2346,9 +2644,11 @@ fn collect_exportable_files(eve_root: &Path) -> Result<Vec<(PathBuf, String)>, S
                 }
             }
 
-            // Collect backup files
+            // Portable exports include individual history. Full recovery
+            // snapshots intentionally contain only the live files so snapshot
+            // storage cannot grow recursively with every automatic backup.
             let backup_dir = profile_path.join("backups");
-            if backup_dir.is_dir() {
+            if include_backups && backup_dir.is_dir() {
                 if let Ok(entries) = fs::read_dir(&backup_dir) {
                     for entry in entries.flatten() {
                         let p = entry.path();
@@ -2372,11 +2672,12 @@ fn collect_exportable_files(eve_root: &Path) -> Result<Vec<(PathBuf, String)>, S
     Ok(files)
 }
 
-#[tauri::command]
-pub fn export_settings(
+fn write_settings_archive(
     app: tauri::AppHandle,
     custom_eve_path: Option<String>,
     export_path: String,
+    include_backups: bool,
+    recovery_label: Option<String>,
 ) -> Result<ExportResult, String> {
     let eve_root =
         eve_settings_root(custom_eve_path.as_deref()).ok_or("EVE settings directory not found")?;
@@ -2385,7 +2686,7 @@ pub fn export_settings(
         return Err("EVE settings directory does not exist".into());
     }
 
-    let exportable_files = collect_exportable_files(&eve_root)?;
+    let exportable_files = collect_exportable_files(&eve_root, include_backups)?;
 
     let dest = PathBuf::from(&export_path);
     let file = fs::File::create(&dest).map_err(|e| format!("Failed to create zip: {}", e))?;
@@ -2437,6 +2738,8 @@ pub fn export_settings(
     let manifest = ExportManifest {
         app_version: version,
         timestamp,
+        label: recovery_label,
+        recovery_snapshot: !include_backups,
         files: manifest_files,
     };
 
@@ -2454,6 +2757,239 @@ pub fn export_settings(
     Ok(ExportResult {
         file_count,
         path: export_path,
+    })
+}
+
+#[tauri::command]
+pub fn export_settings(
+    app: tauri::AppHandle,
+    custom_eve_path: Option<String>,
+    export_path: String,
+) -> Result<ExportResult, String> {
+    write_settings_archive(app, custom_eve_path, export_path, true, None)
+}
+
+const RECOVERY_SNAPSHOT_LIMIT: usize = 10;
+
+fn recovery_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("recovery-snapshots");
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("Failed to create recovery folder: {}", error))?;
+    Ok(path)
+}
+
+fn read_archive_manifest(path: &Path) -> Result<ExportManifest, String> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("Failed to open {}: {}", path.display(), error))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| format!("Invalid recovery archive {}: {}", path.display(), error))?;
+    let mut manifest_file = archive
+        .by_name("manifest.json")
+        .map_err(|_| format!("{} has no manifest", path.display()))?;
+    if manifest_file.size() > 2 * 1024 * 1024 {
+        return Err("Recovery manifest is larger than 2 MiB".into());
+    }
+    let mut content = String::new();
+    manifest_file
+        .read_to_string(&mut content)
+        .map_err(|error| format!("Failed to read recovery manifest: {}", error))?;
+    let manifest: ExportManifest = serde_json::from_str(&content)
+        .map_err(|error| format!("Invalid recovery manifest: {}", error))?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+fn recovery_summary(path: &Path, manifest: &ExportManifest) -> RecoverySnapshot {
+    let mut profiles = HashSet::new();
+    let mut account_count = 0usize;
+    let mut character_count = 0usize;
+    for entry in &manifest.files {
+        let normalized = entry.relative_path.replace('\\', "/");
+        let parts: Vec<&str> = normalized.split('/').collect();
+        if parts.len() >= 2 && parts[1].starts_with("settings_") {
+            profiles.insert(format!("{}/{}", parts[0], parts[1]));
+        }
+        let filename = parts.last().copied().unwrap_or_default();
+        if filename.starts_with("core_user_") && filename.ends_with(".dat") {
+            account_count += 1;
+        } else if filename.starts_with("core_char_") && filename.ends_with(".dat") {
+            character_count += 1;
+        }
+    }
+    RecoverySnapshot {
+        id: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        label: manifest
+            .label
+            .clone()
+            .unwrap_or_else(|| "Full snapshot".to_string()),
+        timestamp: manifest.timestamp,
+        relative_time: format_relative_time(manifest.timestamp),
+        file_count: manifest.files.len(),
+        account_count,
+        character_count,
+        profile_count: profiles.len(),
+        size_bytes: fs::metadata(path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
+        app_version: manifest.app_version.clone(),
+    }
+}
+
+fn scan_recovery_snapshots(app: &tauri::AppHandle) -> Result<Vec<RecoverySnapshot>, String> {
+    let directory = recovery_directory(app)?;
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        let path = entry.path();
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !path.is_file() || !filename.starts_with("snapshot-") || !filename.ends_with(".zip") {
+            continue;
+        }
+        if let Ok(manifest) = read_archive_manifest(&path) {
+            if manifest.recovery_snapshot {
+                snapshots.push(recovery_summary(&path, &manifest));
+            }
+        }
+    }
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.timestamp));
+    Ok(snapshots)
+}
+
+fn prune_recovery_snapshots(
+    app: &tauri::AppHandle,
+    protected_id: Option<&str>,
+) -> Result<(), String> {
+    let snapshots = scan_recovery_snapshots(app)?;
+    let mut kept = 0usize;
+    for snapshot in snapshots {
+        if protected_id == Some(snapshot.id.as_str()) || kept < RECOVERY_SNAPSHOT_LIMIT {
+            kept += 1;
+            continue;
+        }
+        let _ = fs::remove_file(recovery_directory(app)?.join(snapshot.id));
+    }
+    Ok(())
+}
+
+fn create_recovery_snapshot_internal(
+    app: tauri::AppHandle,
+    custom_eve_path: Option<String>,
+    label: String,
+    prune: bool,
+) -> Result<RecoverySnapshot, String> {
+    let directory = recovery_directory(&app)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?;
+    let id = format!("snapshot-{}-{:09}.zip", now.as_secs(), now.subsec_nanos());
+    let destination = directory.join(&id);
+    let partial = directory.join(format!(".{}.partial", id));
+    let result = write_settings_archive(
+        app.clone(),
+        custom_eve_path,
+        partial.to_string_lossy().into_owned(),
+        false,
+        Some(label),
+    );
+    if let Err(error) = result {
+        let _ = fs::remove_file(&partial);
+        return Err(error);
+    }
+    fs::rename(&partial, &destination)
+        .map_err(|error| format!("Failed to finish recovery snapshot: {}", error))?;
+    let manifest = read_archive_manifest(&destination)?;
+    let snapshot = recovery_summary(&destination, &manifest);
+    if prune {
+        prune_recovery_snapshots(&app, Some(&snapshot.id))?;
+    }
+    Ok(snapshot)
+}
+
+fn validated_recovery_path(app: &tauri::AppHandle, snapshot_id: &str) -> Result<PathBuf, String> {
+    let candidate_name = Path::new(snapshot_id)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid recovery snapshot")?;
+    if candidate_name != snapshot_id
+        || !snapshot_id.starts_with("snapshot-")
+        || !snapshot_id.ends_with(".zip")
+    {
+        return Err("Invalid recovery snapshot".into());
+    }
+    let path = recovery_directory(app)?.join(snapshot_id);
+    if !path.is_file() {
+        return Err("Recovery snapshot no longer exists".into());
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+pub fn create_recovery_snapshot(
+    app: tauri::AppHandle,
+    custom_eve_path: Option<String>,
+    label: Option<String>,
+) -> Result<RecoverySnapshot, String> {
+    ensure_eve_closed()?;
+    let label = label
+        .map(|value| value.trim().chars().take(80).collect::<String>())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Manual full snapshot".to_string());
+    let snapshot = create_recovery_snapshot_internal(app.clone(), custom_eve_path, label, true)?;
+    emit_data_changed(&app);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn restore_recovery_snapshot(
+    app: tauri::AppHandle,
+    custom_eve_path: Option<String>,
+    snapshot_id: String,
+) -> Result<RecoveryRestoreResult, String> {
+    ensure_eve_closed()?;
+    let snapshot_path = validated_recovery_path(&app, &snapshot_id)?;
+    let manifest = read_archive_manifest(&snapshot_path)?;
+    if !manifest.recovery_snapshot {
+        return Err("The selected archive is not a full recovery snapshot".into());
+    }
+    // Preserve the current live state outside the EVE tree before restoring.
+    // The requested snapshot is protected from retention pruning until after
+    // its restore has completed.
+    let rescue = create_recovery_snapshot_internal(
+        app.clone(),
+        custom_eve_path.clone(),
+        "Automatic rescue snapshot before restore".to_string(),
+        false,
+    )?;
+    let overwrite_paths = manifest
+        .files
+        .iter()
+        .map(|entry| entry.relative_path.clone())
+        .collect();
+    let result = execute_import(
+        app.clone(),
+        snapshot_path.to_string_lossy().into_owned(),
+        custom_eve_path,
+        overwrite_paths,
+    )?;
+    prune_recovery_snapshots(&app, Some(&rescue.id))?;
+    emit_data_changed(&app);
+    Ok(RecoveryRestoreResult {
+        restored_count: result.imported_count,
+        unchanged_count: result.skipped_count,
+        rescue_snapshot: rescue,
     })
 }
 

@@ -66,6 +66,7 @@ describe('bulk target selection', () => {
             server('singularity', [profile([accountB], [characterB])]),
         ],
         backups: [],
+        recovery_snapshots: [],
     }
 
     it('collects every matching entry across servers and profiles', () => {

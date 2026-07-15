@@ -1,0 +1,76 @@
+EVE Wrench Personal v0.3.7 cumulative recovery hotfix
+
+This overlay includes every personal-fork change through v0.3.7. It corrects
+the published v0.3.6 build, whose version was bumped on a source tree that did
+not contain the final recovery bar or Drifter special-layout presets. It also
+makes the portable release upload select eve-wrench.exe explicitly instead of
+using the first arbitrary EXE found in the release directory.
+
+Extract this ZIP to Downloads. Then run from Command Prompt:
+
+  cd /d C:\Users\HallT\eve-wrench-personal
+  call "%USERPROFILE%\Downloads\eve-wrench-v0.3.7-recovery-hotfix\APPLY-v0.3.7.cmd" "C:\Users\HallT\eve-wrench-personal"
+  npm install
+  npm run format:check
+  npm test
+  npm run lint:check
+  npm run typecheck
+  npm run knip
+  cargo fmt --all --manifest-path src-tauri\Cargo.toml
+  cargo test --manifest-path src-tauri\Cargo.toml
+  cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
+  npm run tauri build
+
+The production executable is:
+
+  src-tauri\target\release\eve-wrench.exe
+
+Probe formation additions
+
+- Special-layout presets for the supplied Drifter O and Drifter I formations.
+  Every probe has N/S = 0. The presets are offered in the add menu and do not
+  silently consume two of EVE's ten custom slots.
+- Select an account source and one or more account targets, then use
+  "Probe formation variants..." in the right panel.
+- Choose which source formations should vary. Unchecked formations copy with
+  exactly the source geometry, so Drifter I can stay identical while a perch
+  cube varies.
+- Default variability is +/-40 km. N/S, W/E, and U/D can be enabled separately.
+- Variability is deterministic for each server/profile/account. Applying the
+  same source and options again gives that account the same layout.
+- Per-probe offsets are bounded by the requested distance and zero-centred on
+  every enabled axis. This is essential because a whole-formation translation
+  would be removed by EVE's automatic formation centring.
+- Every changed target receives a pre-formation-variants backup when automatic
+  backups are enabled. EVE must be closed before applying variants.
+
+Backup and recovery additions
+
+- "Backup all now" on the front page creates a checksummed ZIP snapshot of all
+  live core_user/core_char files, prefs.ini files, and aliases.
+- Full snapshots live under EVE Wrench Personal's application data directory,
+  outside CCP's EVE settings tree. The newest ten are retained.
+- "Restore all..." shows dated snapshots and account/character/profile counts.
+- A full restore verifies the archive and creates an external rescue snapshot
+  of the current live files before writing anything.
+- Existing transactional import protection still applies: changed files are
+  secured first and earlier writes roll back if a later write fails.
+- The Backups tab is now "Backups & Recovery". Individual history displays an
+  absolute timestamp, character/account, server/profile, and a readable reason
+  such as "Before settings copy" instead of only an internal pre-* label.
+- New manual backup names default to "Name - YYYY-MM-DD HH-MM".
+
+Wiped-settings detection is intentionally not included in this version.
+
+Validation completed in the patch workspace
+
+- Prettier formatting
+- Vue/TypeScript type checking
+- ESLint
+- 22 Vitest tests
+- Knip unused-code analysis
+- Vite production build
+- git diff whitespace check
+
+The patch workspace does not contain Cargo, so the Rust formatting, tests, and
+Clippy commands above must be run on the Windows machine before building.

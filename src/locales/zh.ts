@@ -103,11 +103,23 @@ export default {
         settingUpdated: '设置已更新',
         settingUpdatedDesc: '始终显示标签 {status}',
         updateSettingFailed: '更新设置失败',
+        recoveryCreated: '完整快照已创建',
+        recoveryCreatedDesc:
+            '已保护 {accounts} 个账户文件和 {characters} 个角色文件',
+        recoveryFailed: '完整快照失败',
+        recoveryRestored: '完整快照已恢复',
+        recoveryRestoredDesc:
+            '已恢复 {restored} 个文件；{unchanged} 个文件完全相同',
+        recoveryRestoreFailed: '完整恢复失败',
+        formationVariantsApplied: '探针阵型变体已应用',
+        formationVariantsAppliedDesc: '已为 {targets} 个目标创建稳定的阵型变体',
+        formationVariantsPartial: '部分探针阵型变体未应用',
+        formationVariantsFailed: '探针阵型变体失败',
     },
     // 标题栏
     titleBar: {
         settings: '设置',
-        backups: '备份',
+        backups: '备份与恢复',
         toggleTheme: '切换主题',
         preview: '预览版',
     },
@@ -118,6 +130,21 @@ export default {
         selectedCount: '已选择 {count} 个',
         deleteSelected: '删除所选',
         automatic: '自动',
+        created: '创建时间',
+        identity: '角色 / 账户',
+        reason: '原因',
+        individualTitle: '单文件备份',
+        individualDescription: '手动创建或更改设置前创建的单文件回滚点。',
+        fullTitle: '完整快照',
+        fullDescription: '保存在 CCP 的 EVE 设置文件夹之外的完整恢复归档。',
+        noIndividual: '尚无单文件回滚备份。',
+        reasons: {
+            preSelectiveCopy: '复制设置前',
+            preRestore: '恢复前',
+            preFormationEdit: '编辑阵型前',
+            preFormationVariants: '应用阵型变体前',
+            preImport: '导入前',
+        },
     },
     // 设置相关
     settings: {
@@ -153,6 +180,7 @@ export default {
         noTargetsSelected: '未选择目标',
         copying: '复制中...',
         copySettings: '复制设置',
+        probeVariants: '探针阵型变体…',
         addEveryAccount: '将所有账户添加为目标',
         addEveryCharacter: '将所有角色添加为目标',
         targetScope: '批量目标范围',
@@ -241,6 +269,7 @@ export default {
         presetScan: '扫描布局',
         presetGrid: '网格 / 跳点布局',
         presetDirectional: '对称阶梯',
+        presetSpecial: '特殊布局',
         builderTitle: '阵型生成器',
         geometry: '几何布局',
         probeType: '探针类型',
@@ -310,6 +339,8 @@ export default {
             northSouth: '北 / 南',
             westEast: '西 / 东',
             upDown: '上 / 下',
+            drifterOFlat: 'Drifter O — 南北轴归零',
+            drifterIFlat: 'Drifter I — 南北轴归零',
         },
         duplicate: '复制阵型',
         deleteFormation: '删除阵型',
@@ -345,6 +376,48 @@ export default {
         reload: '重新加载',
         loadFailed: '加载探针阵型失败',
         saveFailed: '保存探针阵型失败',
+    },
+    recovery: {
+        title: '灾难恢复',
+        latest: '最新：{time} · {accounts} 个账户 · {characters} 个角色',
+        none: '尚无完整快照。建议在下一次 EVE 更新前创建。',
+        backupAll: '立即全部备份',
+        restoreAll: '全部恢复…',
+        manualLabel: '手动完整快照',
+        restoreTitle: '恢复所有设置文件',
+        restoreDescription:
+            '选择完整快照。快照保存在 CCP 的 EVE 设置文件夹之外。',
+        latestBadge: '最新',
+        snapshotCounts:
+            '{accounts} 个账户 · {characters} 个角色 · {profiles} 个配置',
+        rescueNote:
+            '恢复前，EVE Wrench 会先为当前文件创建救援快照。请保持 EVE 关闭。',
+        restoreSelected: '恢复所选快照',
+        restoring: '正在恢复…',
+        confirmTitle: '恢复此完整快照？',
+        confirmDescription:
+            '恢复“{label}”（{accounts} 个账户文件，{characters} 个角色文件）？当前文件会先保存为自动救援快照。',
+    },
+    formationVariants: {
+        title: '探针阵型变体',
+        description:
+            '将 {source} 的全部阵型复制到 {targets} 个账户，仅改变所选布局。',
+        choose: '要变化的布局',
+        varied: '变化',
+        exact: '精确复制',
+        empty: '源账户没有自定义探针阵型。',
+        maximum: '每个探针的最大变化',
+        axes: '变化轴',
+        northSouth: '北 / 南',
+        westEast: '西 / 东',
+        upDown: '上 / 下',
+        stableNote:
+            '每个账户都会得到确定且零重心的布局。使用相同源、距离和选择再次应用会生成相同几何形状，EVE 居中不会消除差异。',
+        apply: '应用变体',
+        applying: '正在应用…',
+        confirmTitle: '应用变化后的探针阵型？',
+        confirmDescription:
+            '替换 {targets} 个目标的探针阵型列表？所选 {formations} 个布局在每个启用轴上最多变化 ±{distance} 千米；未勾选布局会精确复制。',
     },
     // 导入对话框
     importDialog: {

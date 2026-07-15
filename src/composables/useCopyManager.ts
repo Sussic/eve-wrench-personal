@@ -17,6 +17,9 @@ import type {
     BatchMutationResult,
     BulkTargetScope,
     ServerId,
+    FormationVariationAxes,
+    RecoverySnapshot,
+    RecoveryRestoreResult,
 } from '@/types'
 import { getServerShortName, isBackup } from '@/types'
 import { defaultGroupSelection, groupsForKind } from '@/lib/copyGroups'
@@ -48,6 +51,7 @@ const copyGroupSelection = useStorage<Record<string, boolean>>(
     { mergeDefaults: true }
 )
 const autoBackup = ref(true)
+const recoveryBusy = ref(false)
 let listenerSetup = false
 
 async function setupListener(loadDataFn: () => Promise<void>) {
@@ -90,6 +94,18 @@ export function useCopyManager() {
             source.value !== null &&
             targets.value.length > 0 &&
             hasSelectedCopyGroup.value &&
+            !copying.value &&
+            !eveRunning.value
+        )
+    })
+
+    const canCreateFormationVariants = computed(() => {
+        return (
+            source.value !== null &&
+            !isBackup(source.value) &&
+            source.value.kind === 'user' &&
+            targets.value.length > 0 &&
+            targets.value.every((target) => target.kind === 'user') &&
             !copying.value &&
             !eveRunning.value
         )
@@ -431,13 +447,15 @@ export function useCopyManager() {
     }
 
     async function createBackup(entry: SettingsEntry) {
+        const now = new Date()
+        const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`
         const name = await prompt({
             title: t('dialog.createBackup'),
             description: t('dialog.createBackupDesc', {
                 name: entry.display_name,
             }),
             placeholder: t('dialog.backupName'),
-            defaultValue: entry.display_name,
+            defaultValue: `${entry.display_name} - ${timestamp}`,
             confirmText: t('dialog.create'),
         })
         if (!name) return
@@ -452,6 +470,142 @@ export function useCopyManager() {
             })
         } catch (e: unknown) {
             toast.error(t('toast.backupFailed'), { description: String(e) })
+        }
+    }
+
+    async function createFullSnapshot() {
+        recoveryBusy.value = true
+        try {
+            const snapshot = await invoke<RecoverySnapshot>(
+                'create_recovery_snapshot',
+                {
+                    customEvePath: customEvePath.value,
+                    label: t('recovery.manualLabel'),
+                }
+            )
+            toast.success(t('toast.recoveryCreated'), {
+                description: t('toast.recoveryCreatedDesc', {
+                    accounts: snapshot.account_count,
+                    characters: snapshot.character_count,
+                }),
+            })
+            await loadData()
+        } catch (e: unknown) {
+            toast.error(t('toast.recoveryFailed'), { description: String(e) })
+        } finally {
+            recoveryBusy.value = false
+        }
+    }
+
+    async function restoreFullSnapshot(
+        snapshot: RecoverySnapshot
+    ): Promise<boolean> {
+        const confirmed = await confirm({
+            title: t('recovery.confirmTitle'),
+            description: t('recovery.confirmDescription', {
+                label: snapshot.label,
+                accounts: snapshot.account_count,
+                characters: snapshot.character_count,
+            }),
+            confirmText: t('dialog.restore'),
+            destructive: true,
+        })
+        if (!confirmed) return false
+
+        recoveryBusy.value = true
+        try {
+            const result = await invoke<RecoveryRestoreResult>(
+                'restore_recovery_snapshot',
+                {
+                    customEvePath: customEvePath.value,
+                    snapshotId: snapshot.id,
+                }
+            )
+            toast.success(t('toast.recoveryRestored'), {
+                description: t('toast.recoveryRestoredDesc', {
+                    restored: result.restored_count,
+                    unchanged: result.unchanged_count,
+                }),
+            })
+            await loadData()
+            return true
+        } catch (e: unknown) {
+            toast.error(t('toast.recoveryRestoreFailed'), {
+                description: String(e),
+            })
+            return false
+        } finally {
+            recoveryBusy.value = false
+        }
+    }
+
+    async function executeFormationVariants(options: {
+        variedFormationIds: number[]
+        variabilityKm: number
+        axes: FormationVariationAxes
+    }): Promise<boolean> {
+        if (
+            !source.value ||
+            isBackup(source.value) ||
+            source.value.kind !== 'user' ||
+            targets.value.length === 0
+        ) {
+            return false
+        }
+        const confirmed = await confirm({
+            title: t('formationVariants.confirmTitle'),
+            description: t('formationVariants.confirmDescription', {
+                targets: targets.value.length,
+                formations: options.variedFormationIds.length,
+                distance: options.variabilityKm,
+            }),
+            confirmText: t('formationVariants.apply'),
+        })
+        if (!confirmed) return false
+
+        copying.value = true
+        try {
+            const result = await invoke<BatchMutationResult>(
+                'copy_probe_formations_varied',
+                {
+                    sourcePath: source.value.path,
+                    targetPaths: targets.value.map((target) => target.path),
+                    variedFormationIds: options.variedFormationIds,
+                    variabilityKm: options.variabilityKm,
+                    axes: options.axes,
+                    backup: autoBackup.value,
+                }
+            )
+            if (result.failed.length > 0) {
+                toast.warning(t('toast.formationVariantsPartial'), {
+                    description: t('toast.settingsCopyPartialDesc', {
+                        succeeded: result.succeeded.length,
+                        failed: result.failed.length,
+                        reason: result.failed[0].error,
+                    }),
+                })
+                const failed = new Set(
+                    result.failed.map((failure) => failure.path)
+                )
+                targets.value = targets.value.filter((target) =>
+                    failed.has(target.path)
+                )
+                return false
+            }
+            toast.success(t('toast.formationVariantsApplied'), {
+                description: t('toast.formationVariantsAppliedDesc', {
+                    targets: result.succeeded.length,
+                }),
+            })
+            targets.value = []
+            return true
+        } catch (e: unknown) {
+            toast.error(t('toast.formationVariantsFailed'), {
+                description: String(e),
+            })
+            return false
+        } finally {
+            copying.value = false
         }
     }
 
@@ -722,6 +876,7 @@ export function useCopyManager() {
         targets,
         sourceKind,
         canCopy,
+        canCreateFormationVariants,
         hasData,
         customEvePath,
         init,
@@ -756,5 +911,9 @@ export function useCopyManager() {
         showImportDialog,
         copyGroupSelection,
         eveRunning,
+        recoveryBusy,
+        createFullSnapshot,
+        restoreFullSnapshot,
+        executeFormationVariants,
     }
 }

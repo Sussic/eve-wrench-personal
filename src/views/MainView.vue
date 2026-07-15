@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import 'vue-sonner/style.css'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -12,10 +12,18 @@ import CopyPanel from '@/components/CopyPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
+import RecoveryBar from '@/components/RecoveryBar.vue'
+import RecoveryDialog from '@/components/RecoveryDialog.vue'
+import FormationVariationDialog from '@/components/FormationVariationDialog.vue'
 import { useCopyManager } from '@/composables/useCopyManager'
 import { useI18n } from '@/composables/useI18n'
 import { isBackup } from '@/types'
-import type { ServerId } from '@/types'
+import type {
+    FormationVariationAxes,
+    RecoverySnapshot,
+    ServerId,
+    SettingsEntry,
+} from '@/types'
 
 const colorMode = useColorMode()
 const { t } = useI18n()
@@ -28,6 +36,7 @@ const {
     targets,
     sourceKind,
     canCopy,
+    canCreateFormationVariants,
     hasData,
     customEvePath,
     init,
@@ -61,9 +70,39 @@ const {
     showImportDialog,
     copyGroupSelection,
     eveRunning,
+    recoveryBusy,
+    createFullSnapshot,
+    restoreFullSnapshot,
+    executeFormationVariants,
 } = useCopyManager()
 
 const activeServerId = ref<ServerId | null>(null)
+const showRecoveryDialog = ref(false)
+const showFormationVariationDialog = ref(false)
+const formationVariationSource = computed<SettingsEntry | null>(() => {
+    if (
+        !source.value ||
+        isBackup(source.value) ||
+        source.value.kind !== 'user'
+    ) {
+        return null
+    }
+    return source.value
+})
+
+async function applyFormationVariants(options: {
+    variedFormationIds: number[]
+    variabilityKm: number
+    axes: FormationVariationAxes
+}) {
+    showFormationVariationDialog.value = false
+    await executeFormationVariants(options)
+}
+
+async function restoreSnapshot(snapshot: RecoverySnapshot) {
+    showRecoveryDialog.value = false
+    await restoreFullSnapshot(snapshot)
+}
 
 function isBackupSource(backup: { id: string }): boolean {
     return !!(
@@ -100,6 +139,21 @@ onMounted(init)
                 @confirm="executeImport"
                 @cancel="cancelImport"
             />
+            <RecoveryDialog
+                :open="showRecoveryDialog"
+                :snapshots="appData?.recovery_snapshots ?? []"
+                :busy="recoveryBusy"
+                @cancel="showRecoveryDialog = false"
+                @restore="restoreSnapshot"
+            />
+            <FormationVariationDialog
+                :open="showFormationVariationDialog"
+                :source="formationVariationSource"
+                :targets="targets"
+                :busy="copying"
+                @cancel="showFormationVariationDialog = false"
+                @apply="applyFormationVariants"
+            />
             <TitleBar
                 :loading="loading"
                 :color-mode="colorMode"
@@ -121,6 +175,15 @@ onMounted(init)
                 <AlertTriangle class="size-4" />
                 {{ t('safety.eveRunning') }}
             </div>
+
+            <RecoveryBar
+                v-if="appData"
+                :snapshots="appData.recovery_snapshots"
+                :busy="recoveryBusy"
+                :eve-running="eveRunning"
+                @backup-all="createFullSnapshot"
+                @restore-all="showRecoveryDialog = true"
+            />
 
             <main class="flex flex-1 overflow-hidden">
                 <div
@@ -212,12 +275,16 @@ onMounted(init)
                         @delete-backups="deleteBackups"
                         @refresh="refresh"
                         @set-brackets-always-show="setBracketsAlwaysShow"
+                        @open-recovery="showRecoveryDialog = true"
                     />
 
                     <CopyPanel
                         :source="source"
                         :targets="targets"
                         :can-copy="canCopy"
+                        :can-create-formation-variants="
+                            canCreateFormationVariants
+                        "
                         :copying="copying"
                         :group-selection="copyGroupSelection"
                         :active-server-id="activeServerId"
@@ -228,6 +295,9 @@ onMounted(init)
                             (scope) => addAllTargets(scope, activeServerId)
                         "
                         @execute-copy="executeCopy"
+                        @create-formation-variants="
+                            showFormationVariationDialog = true
+                        "
                         @set-group="
                             (id, value) => (copyGroupSelection[id] = value)
                         "

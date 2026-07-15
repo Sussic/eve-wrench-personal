@@ -14,7 +14,7 @@ jobs:
     outputs:
       notes: ${{ steps.notes.outputs.notes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -31,10 +31,14 @@ jobs:
         env:
           CONTENT: ${{ steps.cliff.outputs.content }}
         run: |
-          notes="## What's Changed"$'\n\n'"$CONTENT"
-          # Fall back to a placeholder if there were no notable commits
-          if [ -z "$(printf '%s' "$CONTENT" | tr -d '[:space:]')" ]; then
-            notes="See the assets below to download and install EVE Wrench Personal."
+          notes="## Downloads"$'\n\n'
+          notes+="- **Windows:** use the file ending in \`Windows-x64-setup.exe\`. Use \`Windows-x64-Portable.exe\` only if you do not want to install it."$'\n'
+          notes+="- **macOS Apple Silicon:** use the file ending in \`macOS-Apple-Silicon.dmg\`."$'\n'
+          notes+="- **macOS Intel:** use the file ending in \`macOS-Intel.dmg\`."$'\n'
+          notes+="- **Linux:** use the file ending in \`Linux-x64.AppImage\`."$'\n'
+          notes+="- The two **Source code** archives added by GitHub are for developers, not normal installation."
+          if [ -n "$(printf '%s' "$CONTENT" | tr -d '[:space:]')" ]; then
+            notes+=$'\n\n'"## What's Changed"$'\n\n'"$CONTENT"
           fi
           {
             echo 'notes<<CHANGELOG_EOF'
@@ -51,17 +55,21 @@ jobs:
       matrix:
         include:
           - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
+            args: "--target aarch64-apple-darwin --bundles dmg"
+            assetName: "EVE-Wrench-Personal-v[version]-macOS-Apple-Silicon[ext]"
           - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
+            args: "--target x86_64-apple-darwin --bundles dmg"
+            assetName: "EVE-Wrench-Personal-v[version]-macOS-Intel[ext]"
           - platform: "ubuntu-22.04"
-            args: ""
+            args: "--bundles appimage"
+            assetName: "EVE-Wrench-Personal-v[version]-Linux-x64[ext]"
           - platform: "windows-latest"
-            args: ""
+            args: "--bundles nsis"
+            assetName: "EVE-Wrench-Personal-v[version]-Windows-x64[setup][ext]"
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -70,7 +78,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
 
@@ -94,7 +102,7 @@ jobs:
         shell: bash
         run: echo "prerelease=$(node -p "require('./src-tauri/tauri.conf.json').version.includes('-')")" >> "$GITHUB_OUTPUT"
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -103,6 +111,8 @@ jobs:
           releaseBody: ${{ needs.changelog.outputs.notes }}
           releaseDraft: true
           prerelease: ${{ steps.version.outputs.prerelease }}
+          uploadUpdaterJson: false
+          releaseAssetNamePattern: ${{ matrix.assetName }}
           args: ${{ matrix.args }}
 
       # The compiled binary is self-contained (the frontend is embedded), so
@@ -115,7 +125,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          exe=$(find src-tauri/target/release -maxdepth 1 -name '*.exe' | head -1)
-          dest="EVE-Wrench-Personal_${version}_x64-portable.exe"
+          exe="src-tauri/target/release/eve-wrench.exe"
+          test -f "$exe"
+          dest="EVE-Wrench-Personal-v${version}-Windows-x64-Portable.exe"
           cp "$exe" "$dest"
           gh release upload "v${version}" "$dest" --clobber

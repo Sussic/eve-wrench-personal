@@ -158,6 +158,24 @@ export function buildDirectionalLadder(
     })
 }
 
+// Flattened versions of the two layouts supplied by the user. EVE axes are
+// x = West/East, y = Up/Down, z = North/South; z deliberately remains zero.
+export function buildDrifterOFlat(): FormationProbe[] {
+    return [
+        probe(11_272.192, 2_736.128, 0, 0.5),
+        probe(-11_272.192, -2_736.128, 0, 0.5),
+        probe(0, 0, 0, 32),
+        probe(0, 0, 0, 32),
+    ]
+}
+
+export function buildDrifterIFlat(): FormationProbe[] {
+    return [
+        probe(10_682.368, 4_882.432, 0, 0.5),
+        probe(-10_682.368, -4_882.432, 0, 0.5),
+    ]
+}
+
 export function buildFormationProbes(options: {
     kind: BuilderKind
     rangeAu: number
@@ -254,6 +272,11 @@ export const GRID_PRESETS: FormationPreset[] = [
         icon: Box,
         probes: () => buildGridShell(1000, 0.5),
     },
+]
+
+export const SPECIAL_PRESETS: FormationPreset[] = [
+    { id: 'drifterOFlat', icon: Crosshair, probes: buildDrifterOFlat },
+    { id: 'drifterIFlat', icon: Crosshair, probes: buildDrifterIFlat },
 ]
 
 const STACK_AXES: Array<{

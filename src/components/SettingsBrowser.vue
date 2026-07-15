@@ -7,6 +7,7 @@ import {
     ChevronDown,
     ListPlus,
     Search,
+    ShieldCheck,
     Trash2,
     X,
 } from 'lucide-vue-next'
@@ -59,6 +60,7 @@ const emit = defineEmits<{
     activeServerChanged: [serverId: ServerId | null]
     refresh: []
     setBracketsAlwaysShow: [serverPath: string, enabled: boolean]
+    openRecovery: []
 }>()
 
 const { t } = useI18n()
@@ -83,7 +85,12 @@ onMounted(() => window.addEventListener('keydown', focusSearch))
 onUnmounted(() => window.removeEventListener('keydown', focusSearch))
 
 watch(
-    [() => props.appData.servers, () => props.appData.backups.length],
+    [
+        () => props.appData.servers,
+        () =>
+            props.appData.backups.length +
+            props.appData.recovery_snapshots.length,
+    ],
     ([servers, backupCount]) => {
         if (!servers.length && backupCount > 0) {
             activeTab.value = 'backups'
@@ -236,6 +243,13 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
     }
     return entries
 }
+
+function formatTimestamp(timestamp: number): string {
+    return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(new Date(timestamp * 1000))
+}
 </script>
 
 <template>
@@ -260,14 +274,20 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                         <span>{{ server.info.name }}</span>
                     </TabsTrigger>
                     <TabsTrigger
-                        v-if="appData.backups.length"
+                        v-if="
+                            appData.backups.length ||
+                            appData.recovery_snapshots.length
+                        "
                         value="backups"
                         class="gap-1.5 data-[state=active]:bg-muted"
                     >
                         <Archive class="size-3" />
                         <span>{{ t('titleBar.backups') }}</span>
                         <span class="text-xs text-muted-foreground"
-                            >({{ appData.backups.length }})</span
+                            >({{
+                                appData.backups.length +
+                                appData.recovery_snapshots.length
+                            }})</span
                         >
                     </TabsTrigger>
                 </TabsList>
@@ -360,10 +380,71 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                 </TabsContent>
 
                 <TabsContent value="backups" class="mt-0">
+                    <section
+                        v-if="appData.recovery_snapshots.length"
+                        class="mb-5"
+                    >
+                        <div class="mb-2 flex items-end gap-2">
+                            <div>
+                                <div class="text-lg font-semibold">
+                                    {{ t('backup.fullTitle') }}
+                                </div>
+                                <div class="text-xs text-muted-foreground">
+                                    {{ t('backup.fullDescription') }}
+                                </div>
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                class="ml-auto h-7"
+                                @click="emit('openRecovery')"
+                            >
+                                {{ t('recovery.restoreAll') }}
+                            </Button>
+                        </div>
+                        <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            <button
+                                v-for="snapshot in appData.recovery_snapshots.slice(
+                                    0,
+                                    3
+                                )"
+                                :key="snapshot.id"
+                                type="button"
+                                class="rounded-md border p-2 text-left hover:bg-muted/40"
+                                @click="emit('openRecovery')"
+                            >
+                                <div
+                                    class="flex items-center gap-1.5 text-xs font-medium"
+                                >
+                                    <ShieldCheck
+                                        class="size-3.5 text-primary"
+                                    />
+                                    {{ formatTimestamp(snapshot.timestamp) }}
+                                </div>
+                                <div
+                                    class="mt-0.5 text-[10px] text-muted-foreground"
+                                >
+                                    {{
+                                        t('recovery.snapshotCounts', {
+                                            accounts: snapshot.account_count,
+                                            characters:
+                                                snapshot.character_count,
+                                            profiles: snapshot.profile_count,
+                                        })
+                                    }}
+                                </div>
+                            </button>
+                        </div>
+                    </section>
                     <div class="mb-3 flex items-center gap-2">
-                        <span class="text-lg font-semibold">{{
-                            t('titleBar.backups')
-                        }}</span>
+                        <div>
+                            <div class="text-lg font-semibold">
+                                {{ t('backup.individualTitle') }}
+                            </div>
+                            <div class="text-xs text-muted-foreground">
+                                {{ t('backup.individualDescription') }}
+                            </div>
+                        </div>
                         <span
                             class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
                         >
@@ -408,42 +489,45 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                     <TableHead class="w-8"></TableHead>
                                     <TableHead
                                         class="cursor-pointer select-none"
-                                        @click="toggleBackupSort('name')"
+                                        @click="toggleBackupSort('time')"
                                     >
                                         <div class="flex items-center gap-1">
-                                            {{ t('backup.name') }}
+                                            {{ t('backup.created') }}
                                             <ChevronUp
                                                 v-if="
-                                                    backupSortCol === 'name' &&
+                                                    backupSortCol === 'time' &&
                                                     backupSortDir === 'asc'
                                                 "
                                                 class="size-3"
                                             />
                                             <ChevronDown
                                                 v-else-if="
-                                                    backupSortCol === 'name' &&
+                                                    backupSortCol === 'time' &&
                                                     backupSortDir === 'desc'
                                                 "
                                                 class="size-3"
                                             />
                                         </div>
                                     </TableHead>
+                                    <TableHead>{{
+                                        t('backup.identity')
+                                    }}</TableHead>
                                     <TableHead
                                         class="cursor-pointer select-none"
-                                        @click="toggleBackupSort('time')"
+                                        @click="toggleBackupSort('name')"
                                     >
                                         <div class="flex items-center gap-1">
-                                            {{ t('backup.date') }}
+                                            {{ t('backup.reason') }}
                                             <ChevronUp
                                                 v-if="
-                                                    backupSortCol === 'time' &&
+                                                    backupSortCol === 'name' &&
                                                     backupSortDir === 'asc'
                                                 "
                                                 class="size-3"
                                             />
                                             <ChevronDown
                                                 v-else-if="
-                                                    backupSortCol === 'time' &&
+                                                    backupSortCol === 'name' &&
                                                     backupSortDir === 'desc'
                                                 "
                                                 class="size-3"
@@ -470,17 +554,16 @@ function getTargetsForBackup(backup: BackupEntry): SettingsEntry[] {
                                         toggleBackup(backup.id, $event)
                                     "
                                 />
-                                <TableRow
-                                    v-if="
-                                        searchQuery &&
-                                        sortedBackups.length === 0
-                                    "
-                                >
+                                <TableRow v-if="sortedBackups.length === 0">
                                     <TableCell
-                                        colspan="5"
+                                        colspan="6"
                                         class="h-24 text-center font-normal text-muted-foreground"
                                     >
-                                        {{ t('search.noResults') }}
+                                        {{
+                                            searchQuery
+                                                ? t('search.noResults')
+                                                : t('backup.noIndividual')
+                                        }}
                                     </TableCell>
                                 </TableRow>
                             </TableBody>

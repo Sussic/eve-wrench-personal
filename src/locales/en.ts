@@ -110,11 +110,24 @@ export default {
         settingUpdated: 'Setting updated',
         settingUpdatedDesc: 'Brackets always show {status}',
         updateSettingFailed: 'Failed to update setting',
+        recoveryCreated: 'Full snapshot created',
+        recoveryCreatedDesc:
+            'Protected {accounts} account file(s) and {characters} character file(s)',
+        recoveryFailed: 'Full snapshot failed',
+        recoveryRestored: 'Full snapshot restored',
+        recoveryRestoredDesc:
+            'Restored {restored} file(s); {unchanged} were already identical',
+        recoveryRestoreFailed: 'Full restore failed',
+        formationVariantsApplied: 'Probe variants applied',
+        formationVariantsAppliedDesc:
+            'Created stable formation variants for {targets} target(s)',
+        formationVariantsPartial: 'Some probe variants were not applied',
+        formationVariantsFailed: 'Probe variants failed',
     },
     // Title Bar
     titleBar: {
         settings: 'Settings',
-        backups: 'Backups',
+        backups: 'Backups & Recovery',
         toggleTheme: 'Toggle theme',
         preview: 'Preview',
     },
@@ -125,6 +138,23 @@ export default {
         selectedCount: '{count} selected',
         deleteSelected: 'Delete selected',
         automatic: 'Auto',
+        created: 'Created',
+        identity: 'Character / account',
+        reason: 'Reason',
+        individualTitle: 'Individual backups',
+        individualDescription:
+            'Per-file rollback points created manually or before a settings change.',
+        fullTitle: 'Full snapshots',
+        fullDescription:
+            'Complete recovery archives stored outside CCP’s EVE settings folder.',
+        noIndividual: 'No individual rollback backups yet.',
+        reasons: {
+            preSelectiveCopy: 'Before settings copy',
+            preRestore: 'Before restore',
+            preFormationEdit: 'Before formation edit',
+            preFormationVariants: 'Before formation variants',
+            preImport: 'Before import',
+        },
     },
     // Settings related
     settings: {
@@ -160,6 +190,7 @@ export default {
         noTargetsSelected: 'No targets selected',
         copying: 'Copying...',
         copySettings: 'Copy Settings',
+        probeVariants: 'Probe formation variants…',
         addEveryAccount: 'Add every account as a target',
         addEveryCharacter: 'Add every character as a target',
         targetScope: 'Bulk target scope',
@@ -250,6 +281,7 @@ export default {
         presetScan: 'Scan layouts',
         presetGrid: 'Grid / perch layouts',
         presetDirectional: 'Symmetric ladders',
+        presetSpecial: 'Special layouts',
         builderTitle: 'Formation builder',
         geometry: 'Geometry',
         probeType: 'Probe type',
@@ -323,6 +355,8 @@ export default {
             northSouth: 'North / South',
             westEast: 'West / East',
             upDown: 'Up / Down',
+            drifterOFlat: 'Drifter O — flat N/S',
+            drifterIFlat: 'Drifter I — flat N/S',
         },
         duplicate: 'Duplicate formation',
         deleteFormation: 'Delete formation',
@@ -360,6 +394,48 @@ export default {
         reload: 'Reload',
         loadFailed: 'Failed to load probe formations',
         saveFailed: 'Failed to save probe formations',
+    },
+    recovery: {
+        title: 'Disaster recovery',
+        latest: 'Latest: {time} · {accounts} account(s) · {characters} character(s)',
+        none: 'No full snapshot yet. Create one before the next EVE update.',
+        backupAll: 'Backup all now',
+        restoreAll: 'Restore all…',
+        manualLabel: 'Manual full snapshot',
+        restoreTitle: 'Restore every setting file',
+        restoreDescription:
+            'Choose a full snapshot. It is stored outside CCP’s EVE settings folder.',
+        latestBadge: 'Latest',
+        snapshotCounts:
+            '{accounts} account(s) · {characters} character(s) · {profiles} profile(s)',
+        rescueNote:
+            'Before restoring, EVE Wrench creates a rescue snapshot of the current live files. EVE must remain closed.',
+        restoreSelected: 'Restore selected',
+        restoring: 'Restoring…',
+        confirmTitle: 'Restore this full snapshot?',
+        confirmDescription:
+            'Restore “{label}” ({accounts} account file(s), {characters} character file(s))? Current files are secured in an automatic rescue snapshot first.',
+    },
+    formationVariants: {
+        title: 'Probe formation variants',
+        description:
+            'Copy every formation from {source} to {targets} account(s), varying only the layouts you select.',
+        choose: 'Layouts to vary',
+        varied: 'varied',
+        exact: 'exact copy',
+        empty: 'The source account has no custom probe formations.',
+        maximum: 'Maximum change per probe',
+        axes: 'Axes to vary',
+        northSouth: 'North / South',
+        westEast: 'West / East',
+        upDown: 'Up / Down',
+        stableNote:
+            'Each account gets a deterministic, zero-centred layout. Reapplying with the same source, distance, and selections produces the same geometry; EVE centring will not erase it.',
+        apply: 'Apply variants',
+        applying: 'Applying…',
+        confirmTitle: 'Apply varied probe formations?',
+        confirmDescription:
+            'Replace the probe formation list on {targets} target(s)? {formations} selected layout(s) will vary by at most ±{distance} km per enabled axis; all unchecked layouts copy exactly.',
     },
     // Import Dialog
     importDialog: {

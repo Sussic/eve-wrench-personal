@@ -65,6 +65,32 @@ export type BulkTargetScope = 'server' | 'all'
 export interface AppData {
     servers: ServerData[]
     backups: BackupEntry[]
+    recovery_snapshots: RecoverySnapshot[]
+}
+
+export interface RecoverySnapshot {
+    id: string
+    label: string
+    timestamp: number
+    relative_time: string
+    file_count: number
+    account_count: number
+    character_count: number
+    profile_count: number
+    size_bytes: number
+    app_version: string
+}
+
+export interface RecoveryRestoreResult {
+    restored_count: number
+    unchanged_count: number
+    rescue_snapshot: RecoverySnapshot
+}
+
+export interface FormationVariationAxes {
+    northSouth: boolean
+    westEast: boolean
+    upDown: boolean
 }
 
 export interface ExportResult {
