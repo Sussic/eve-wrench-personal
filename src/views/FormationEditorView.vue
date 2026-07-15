@@ -16,11 +16,8 @@ import {
     Copy,
     Trash2,
     X,
-    Radar,
     ChevronUp,
     ChevronDown,
-    Sun,
-    Moon,
     Compass,
     Download,
     Upload,
@@ -37,7 +34,7 @@ import {
     DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import WindowControls from '@/components/WindowControls.vue'
+import FormationTitleBar from '@/components/FormationTitleBar.vue'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import type {
     FormationProbe,
@@ -51,11 +48,20 @@ import {
     type FormationPreset,
 } from '@/lib/formationPresets'
 import { useI18n } from '@/composables/useI18n'
+import { useEveRunning } from '@/composables/useEveRunning'
+import {
+    AU_KM,
+    coordinateForDisplay as convertCoordinateForDisplay,
+    coordinateFromDisplay,
+    moveFormationWithIds,
+    type CoordinateUnit,
+} from '@/lib/formationEditorUtils'
 
 const { t } = useI18n()
 const colorMode = useColorMode()
-const { isMac, isMaximized, minimize, toggleMaximize, close } =
-    useWindowChrome()
+const { eveRunning } = useEveRunning()
+const { isMac, isMaximized, minimize, toggleMaximize } = useWindowChrome()
+const appWindow = getCurrentWindow()
 
 const props = defineProps<{
     filePath: string
@@ -72,6 +78,7 @@ const RANGE_OPTIONS = [0.25, 0.5, 1, 2, 4, 8, 16, 32]
 type EditProbe = FormationProbe
 type EditFormation = ProbeFormation
 type Axis = 'x' | 'y' | 'z'
+type DragAxis = Axis | 'free'
 
 // EVE solarsystem coordinates (right-handed): +X West, +Y Up, +Z North.
 // Each axis carries its compass poles (N/S, W/E, U/D), shown in both the
@@ -93,6 +100,7 @@ const loadError = ref<string | null>(null)
 const formations = ref<EditFormation[]>([])
 const selected = ref(0)
 const scaleFactor = ref(2)
+const coordinateUnit = ref<CoordinateUnit>('km')
 const displayName = ref(props.entryName)
 const savedSnapshot = ref('')
 const savedFileHash = ref('')
@@ -159,12 +167,13 @@ onMounted(async () => {
     await refreshDisplayName()
     // The backend broadcasts data-changed to every window on any mutation
     unlisten = await listen('data-changed', onDataChanged)
-    unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
+    unlistenClose = await appWindow.onCloseRequested((event) => {
         if (dirty.value && !window.confirm(t('formationEditor.closeUnsaved'))) {
             event.preventDefault()
         }
     })
     diskPoll = setInterval(checkDisk, 2500)
+    document.addEventListener('keydown', onKeyboardShortcut)
 })
 
 onUnmounted(() => {
@@ -172,6 +181,7 @@ onUnmounted(() => {
     unlistenClose?.()
     if (diskPoll) clearInterval(diskPoll)
     if (historyTimer) clearTimeout(historyTimer)
+    document.removeEventListener('keydown', onKeyboardShortcut)
 })
 
 async function readFormations(): Promise<{
@@ -224,11 +234,24 @@ async function refreshDisplayName() {
         })
         if (name && name !== displayName.value) {
             displayName.value = name
-            await getCurrentWindow().setTitle(`Probe Formations — ${name}`)
+            await appWindow.setTitle(`Probe Formations — ${name}`)
         }
     } catch {
         // keep the name we have
     }
+}
+
+async function closeEditor() {
+    if (dirty.value && !window.confirm(t('formationEditor.closeUnsaved'))) {
+        return
+    }
+
+    // The custom X already handled the unsaved-edit prompt. Remove the native
+    // close-request guard, then force-destroy this secondary window so another
+    // close-request handler cannot keep it alive.
+    unlistenClose?.()
+    unlistenClose = null
+    await appWindow.destroy()
 }
 
 async function onDataChanged() {
@@ -266,8 +289,15 @@ async function checkDisk() {
 
 async function save() {
     if (validationError.value) return
+    if (eveRunning.value) {
+        toast.error(t('formationEditor.eveRunningTitle'), {
+            description: t('formationEditor.eveRunningDesc'),
+        })
+        return
+    }
     saving.value = true
     try {
+        const backup = await getAutoBackup()
         const payload: ProbeFormation[] = formations.value.map((f, i) => ({
             id: f.id,
             name: f.name.trim() || `Formation ${i + 1}`,
@@ -284,7 +314,7 @@ async function save() {
             {
                 filePath: props.filePath,
                 formations: payload,
-                backup: await getAutoBackup(),
+                backup,
                 expectedSha256: savedFileHash.value,
             }
         )
@@ -297,7 +327,11 @@ async function save() {
         historySnapshot = savedSnapshot.value
         diskChanged.value = false
         toast.success(t('formationEditor.saved'), {
-            description: t('formationEditor.savedDesc'),
+            description: t(
+                backup
+                    ? 'formationEditor.savedDescBackup'
+                    : 'formationEditor.savedDescNoBackup'
+            ),
         })
     } catch (e) {
         toast.error(t('formationEditor.saveFailed'), {
@@ -350,15 +384,14 @@ function duplicateFormation() {
 
 function deleteFormation() {
     if (!current.value) return
+    if (!window.confirm(t('formationEditor.confirmDeleteFormation'))) return
     formations.value.splice(selected.value, 1)
     selected.value = Math.min(selected.value, formations.value.length - 1)
 }
 
 function moveFormation(i: number, dir: -1 | 1) {
     const j = i + dir
-    if (j < 0 || j >= formations.value.length) return
-    const arr = formations.value
-    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    if (!moveFormationWithIds(formations.value, i, dir)) return
     if (selected.value === i) selected.value = j
     else if (selected.value === j) selected.value = i
 }
@@ -408,23 +441,34 @@ async function importFormation() {
     })
     if (typeof path !== 'string') return
     try {
-        const imported = await invoke<ProbeFormation>(
+        const imported = await invoke<ProbeFormation[]>(
             'import_probe_formation',
             {
                 importPath: path,
             }
         )
-        formations.value.push({
-            id: nextFormationId(),
-            name: imported.name,
-            probes: imported.probes.map((probe) => ({
-                x: probe.x / KM,
-                y: probe.y / KM,
-                z: probe.z / KM,
-                range: probe.range / AU,
-            })),
-        })
+        if (imported.length > MAX_FORMATIONS - formations.value.length) {
+            throw new Error(t('formationEditor.importTooMany'))
+        }
+        let id = nextFormationId()
+        for (const formation of imported) {
+            formations.value.push({
+                id: id++,
+                name: formation.name,
+                probes: formation.probes.map((probe) => ({
+                    x: probe.x / KM,
+                    y: probe.y / KM,
+                    z: probe.z / KM,
+                    range: probe.range / AU,
+                })),
+            })
+        }
         selected.value = formations.value.length - 1
+        toast.success(t('formationEditor.imported'), {
+            description: t('formationEditor.importedDesc', {
+                count: imported.length,
+            }),
+        })
     } catch (e) {
         toast.error(t('formationEditor.importFailed'), {
             description: String(e),
@@ -455,6 +499,35 @@ async function exportFormation() {
             },
         })
         toast.success(t('formationEditor.exported'))
+    } catch (e) {
+        toast.error(t('formationEditor.exportFailed'), {
+            description: String(e),
+        })
+    }
+}
+
+async function exportAllFormations() {
+    if (!formations.value.length) return
+    const path = await saveFile({
+        defaultPath: 'probe-formations.json',
+        filters: [{ name: 'Probe formations', extensions: ['json'] }],
+    })
+    if (!path) return
+    try {
+        await invoke('export_probe_formations', {
+            exportPath: path,
+            formations: formations.value.map((formation) => ({
+                id: formation.id,
+                name: formation.name.trim(),
+                probes: formation.probes.map((probe) => ({
+                    x: probe.x * KM,
+                    y: probe.y * KM,
+                    z: probe.z * KM,
+                    range: probe.range * AU,
+                })),
+            })),
+        })
+        toast.success(t('formationEditor.exportedAll'))
     } catch (e) {
         toast.error(t('formationEditor.exportFailed'), {
             description: String(e),
@@ -521,6 +594,56 @@ function updateProbe(probe: EditProbe, key: keyof EditProbe, value: unknown) {
     if (isFinite(num)) probe[key] = num
 }
 
+function coordinateForDisplay(km: number): number {
+    return convertCoordinateForDisplay(km, coordinateUnit.value)
+}
+
+function updateCoordinate(probe: EditProbe, axis: Axis, value: unknown) {
+    const num = Number(value)
+    if (!isFinite(num)) return
+    probe[axis] = coordinateFromDisplay(num, coordinateUnit.value)
+}
+
+function coordinateTitle(km: number): string {
+    return `${km.toLocaleString()} km · ${(km / AU_KM).toPrecision(8)} AU`
+}
+
+function isTextEditingTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null
+    return !!element?.closest(
+        'input, textarea, select, [contenteditable="true"]'
+    )
+}
+
+function onKeyboardShortcut(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+    const key = event.key.toLowerCase()
+
+    if (key === 's') {
+        event.preventDefault()
+        if (
+            dirty.value &&
+            !saving.value &&
+            !validationError.value &&
+            !diskChanged.value
+        ) {
+            void save()
+        }
+        return
+    }
+
+    // Preserve native text-field undo while someone is editing a number/name.
+    if (isTextEditingTarget(event.target)) return
+    if (key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) void redo()
+        else void undo()
+    } else if (key === 'y') {
+        event.preventDefault()
+        void redo()
+    }
+}
+
 // Valid probe scan ranges in EVE: powers of two from 0.25 to 32 AU
 function rangeOptionsFor(value: number): number[] {
     // Keep unusual values from existing files selectable instead of lying
@@ -542,6 +665,7 @@ function setAllRanges(value: unknown) {
 const yaw = ref(0.6)
 const pitch = ref(0.4)
 const zoom = ref(1)
+const dragAxis = ref<DragAxis>('free')
 let dragging = false
 let draggingProbe: number | null = null
 const selectedProbe = ref<number | null>(null)
@@ -587,9 +711,16 @@ function onPointerMove(e: PointerEvent) {
         const y1 = -camera.sy - dy
         const depth = camera.depth
         const z1 = -y1 * Math.sin(pitch.value) + depth * Math.cos(pitch.value)
-        probe.y = y1 * Math.cos(pitch.value) + depth * Math.sin(pitch.value)
-        probe.x = x1 * Math.cos(yaw.value) - z1 * Math.sin(yaw.value)
-        probe.z = x1 * Math.sin(yaw.value) + z1 * Math.cos(yaw.value)
+        const next = {
+            y: y1 * Math.cos(pitch.value) + depth * Math.sin(pitch.value),
+            x: x1 * Math.cos(yaw.value) - z1 * Math.sin(yaw.value),
+            z: x1 * Math.sin(yaw.value) + z1 * Math.cos(yaw.value),
+        }
+        if (dragAxis.value === 'free') {
+            Object.assign(probe, next)
+        } else {
+            probe[dragAxis.value] = next[dragAxis.value]
+        }
         lastX = e.clientX
         lastY = e.clientY
         return
@@ -760,44 +891,23 @@ function toggleTheme() {
             :theme="colorMode === 'dark' ? 'dark' : 'light'"
         />
 
-        <!-- Custom titlebar, matching the main window's chrome -->
-        <header
-            data-tauri-drag-region
-            class="flex h-11 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-sm"
+        <FormationTitleBar
+            :title="t('formationEditor.title', { name: displayName })"
+            :color-mode="colorMode"
+            :is-mac="isMac"
+            :is-maximized="isMaximized"
+            @toggle-theme="toggleTheme"
+            @minimize="minimize"
+            @toggle-maximize="toggleMaximize"
+            @close="closeEditor"
+        />
+
+        <div
+            v-if="eveRunning"
+            class="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-xs font-medium text-amber-700 dark:text-amber-300"
         >
-            <div class="pointer-events-none flex-1"></div>
-            <div
-                class="pointer-events-none flex min-w-0 items-center gap-2 px-2"
-            >
-                <Radar
-                    class="size-4 shrink-0 text-foreground"
-                    :stroke-width="2"
-                />
-                <h1 class="truncate text-xs font-semibold">
-                    {{ t('formationEditor.title', { name: displayName }) }}
-                </h1>
-            </div>
-            <div
-                class="flex flex-1 items-center justify-end gap-1"
-            >
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    :title="t('titleBar.toggleTheme')"
-                    @click="toggleTheme"
-                >
-                    <Sun v-if="colorMode === 'dark'" class="size-4" />
-                    <Moon v-else class="size-4" />
-                </Button>
-                <WindowControls
-                    v-if="!isMac"
-                    :is-maximized="isMaximized"
-                    @minimize="minimize"
-                    @toggle-maximize="toggleMaximize"
-                    @close="close"
-                />
-            </div>
-        </header>
+            {{ t('formationEditor.eveRunningDesc') }}
+        </div>
 
         <div
             v-if="diskChanged"
@@ -834,7 +944,7 @@ function toggleTheme() {
         <main v-else class="flex min-h-0 flex-1">
             <!-- Left: control console -->
             <aside
-                class="flex w-[440px] shrink-0 flex-col border-r bg-muted/20"
+                class="flex w-[520px] shrink-0 flex-col border-r bg-muted/20"
             >
                 <!-- Formations -->
                 <section class="border-b px-4 pb-3 pt-4">
@@ -854,15 +964,33 @@ function toggleTheme() {
                             >
                                 <Upload class="size-3.5" />
                             </Button>
-                            <Button
-                                v-if="current"
-                                variant="ghost"
-                                size="icon"
-                                :title="t('formationEditor.export')"
-                                @click="exportFormation"
-                            >
-                                <Download class="size-3.5" />
-                            </Button>
+                            <DropdownMenu v-if="current">
+                                <DropdownMenuTrigger as-child>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        :title="t('formationEditor.export')"
+                                    >
+                                        <Download class="size-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                    <DropdownMenuItem @select="exportFormation">
+                                        {{
+                                            t('formationEditor.exportSelected')
+                                        }}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        @select="exportAllFormations"
+                                    >
+                                        {{
+                                            t('formationEditor.exportAll', {
+                                                count: formations.length,
+                                            })
+                                        }}
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
                             <DropdownMenu>
                                 <DropdownMenuTrigger as-child>
                                     <Button
@@ -1024,19 +1152,29 @@ function toggleTheme() {
                         >
                             {{ t('formationEditor.probes') }}
                         </span>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            :disabled="current.probes.length >= MAX_PROBES"
-                            :title="
-                                current.probes.length >= MAX_PROBES
-                                    ? t('formationEditor.maxProbes')
-                                    : t('formationEditor.addProbe')
-                            "
-                            @click="addProbe"
-                        >
-                            <Plus class="size-3.5" />
-                        </Button>
+                        <div class="flex items-center gap-1">
+                            <select
+                                v-model="coordinateUnit"
+                                class="h-7 rounded-md border border-input/50 bg-background/60 px-1.5 font-mono text-xs uppercase"
+                                :title="t('formationEditor.coordinateUnits')"
+                            >
+                                <option value="km">km</option>
+                                <option value="au">AU</option>
+                            </select>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                :disabled="current.probes.length >= MAX_PROBES"
+                                :title="
+                                    current.probes.length >= MAX_PROBES
+                                        ? t('formationEditor.maxProbes')
+                                        : t('formationEditor.addProbe')
+                                "
+                                @click="addProbe"
+                            >
+                                <Plus class="size-3.5" />
+                            </Button>
+                        </div>
                     </div>
                     <div
                         class="grid grid-cols-[1.25rem_1fr_1fr_1fr_4.5rem_1.5rem] items-center gap-1 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
@@ -1075,11 +1213,14 @@ function toggleTheme() {
                                     v-for="axis in AXES"
                                     :key="axis.key"
                                     type="number"
-                                    step="50"
+                                    :step="coordinateUnit === 'km' ? 50 : 0.001"
                                     class="h-7 border-input/50 bg-background/60 px-1.5 text-right font-mono text-xs tabular-nums"
-                                    :model-value="p[axis.key]"
+                                    :title="coordinateTitle(p[axis.key])"
+                                    :model-value="
+                                        coordinateForDisplay(p[axis.key])
+                                    "
                                     @update:model-value="
-                                        updateProbe(p, axis.key, $event)
+                                        updateCoordinate(p, axis.key, $event)
                                     "
                                 />
                                 <select
@@ -1249,7 +1390,11 @@ function toggleTheme() {
                         size="sm"
                         class="ml-auto min-w-28"
                         :disabled="
-                            saving || !dirty || !!validationError || diskChanged
+                            saving ||
+                            !dirty ||
+                            !!validationError ||
+                            diskChanged ||
+                            eveRunning
                         "
                         @click="save"
                     >
@@ -1448,6 +1593,30 @@ function toggleTheme() {
                         {{ Math.round(zoom * 100) }}%</span
                     >
                 </div>
+
+                <label
+                    class="absolute right-3 top-3 flex items-center gap-2 rounded-md border border-neutral-400/30 bg-white/70 px-2 py-1 text-[10px] uppercase tracking-wider text-neutral-700 backdrop-blur dark:border-white/15 dark:bg-black/40 dark:text-white/70"
+                    @pointerdown.stop
+                    @mousedown.stop
+                    @wheel.stop
+                >
+                    {{ t('formationEditor.dragAxis') }}
+                    <select
+                        v-model="dragAxis"
+                        class="bg-transparent font-mono text-xs normal-case outline-none"
+                    >
+                        <option value="free">
+                            {{ t('formationEditor.dragFree') }}
+                        </option>
+                        <option
+                            v-for="axis in AXES"
+                            :key="`drag-${axis.key}`"
+                            :value="axis.key"
+                        >
+                            {{ axis.pos }}/{{ axis.neg }}
+                        </option>
+                    </select>
+                </label>
 
                 <div
                     class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center"

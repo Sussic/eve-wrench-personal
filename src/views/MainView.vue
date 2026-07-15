@@ -4,24 +4,20 @@ import { onMounted } from 'vue'
 import { useColorMode } from '@vueuse/core'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { Rocket, FolderOpen } from 'lucide-vue-next'
+import { AlertTriangle, Rocket, FolderOpen } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import TitleBar from '@/components/TitleBar.vue'
 import SettingsBrowser from '@/components/SettingsBrowser.vue'
 import CopyPanel from '@/components/CopyPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
-import UpdateModal from '@/components/UpdateModal.vue'
 import ImportDialog from '@/components/ImportDialog.vue'
 import { useCopyManager } from '@/composables/useCopyManager'
-import { useUpdateChecker } from '@/composables/useUpdateChecker'
 import { useI18n } from '@/composables/useI18n'
 import { isBackup } from '@/types'
 
 const colorMode = useColorMode()
 const { t } = useI18n()
-const { updateAvailable, updateInfo, dismissed, dismiss } = useUpdateChecker()
-
 const {
     appData,
     loading,
@@ -60,6 +56,7 @@ const {
     importAnalysis,
     showImportDialog,
     copyGroupSelection,
+    eveRunning,
 } = useCopyManager()
 
 function isBackupSource(backup: { id: string }): boolean {
@@ -97,12 +94,6 @@ onMounted(init)
                 @confirm="executeImport"
                 @cancel="cancelImport"
             />
-            <UpdateModal
-                v-if="updateAvailable && updateInfo && !dismissed"
-                :info="updateInfo"
-                @dismiss="dismiss"
-            />
-
             <TitleBar
                 :loading="loading"
                 :color-mode="colorMode"
@@ -116,6 +107,14 @@ onMounted(init)
                 @import-settings="importSettings"
                 @set-auto-backup="setAutoBackup"
             />
+
+            <div
+                v-if="eveRunning"
+                class="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-medium text-amber-700 dark:text-amber-300"
+            >
+                <AlertTriangle class="size-4" />
+                {{ t('safety.eveRunning') }}
+            </div>
 
             <main class="flex flex-1 overflow-hidden">
                 <div

@@ -10,6 +10,71 @@ use tauri::{Emitter, Manager};
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct MutationFailure {
+    pub path: String,
+    pub error: String,
+}
+
+#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct BatchMutationResult {
+    pub succeeded: Vec<String>,
+    pub failed: Vec<MutationFailure>,
+}
+
+#[cfg(target_os = "windows")]
+fn is_eve_client_running() -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return false;
+    }
+
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut found = false;
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while has_entry {
+        let end = entry
+            .szExeFile
+            .iter()
+            .position(|character| *character == 0)
+            .unwrap_or(entry.szExeFile.len());
+        let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+        if name.eq_ignore_ascii_case("exefile.exe") || name.eq_ignore_ascii_case("eve.exe") {
+            found = true;
+            break;
+        }
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+
+    unsafe { CloseHandle(snapshot) };
+    found
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_eve_client_running() -> bool {
+    false
+}
+
+fn ensure_eve_closed() -> Result<(), String> {
+    if is_eve_client_running() {
+        Err("EVE Online is running. Close every EVE client before changing settings so the client cannot overwrite your changes.".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn is_eve_running() -> bool {
+    is_eve_client_running()
+}
+
 fn emit_data_changed(app: &tauri::AppHandle) {
     let _ = app.emit("data-changed", ());
 }
@@ -879,6 +944,11 @@ pub struct PortableProbe {
     pub z_km: f64,
     pub range_au: f64,
 }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PortableFormationPack {
+    pub schema_version: u32,
+    pub formations: Vec<PortableFormation>,
+}
 
 const UI_KEY: &str = "bytes:ui";
 const FORMATIONS_KEY: &str = "bytes:probescanning.customFormations";
@@ -1362,9 +1432,10 @@ pub fn copy_settings_selective(
     target_paths: Vec<String>,
     excluded_groups: Vec<String>,
     backup: Option<bool>,
-) -> Result<u32, String> {
+) -> Result<BatchMutationResult, String> {
     use filetime::FileTime;
 
+    ensure_eve_closed()?;
     let backup = backup.unwrap_or(true);
 
     let source = Path::new(&source_path);
@@ -1381,48 +1452,47 @@ pub fn copy_settings_selective(
         .filter(|group| !excluded.contains(group))
         .collect();
     let (source_json, _) = load_settings_json(source)?;
-    let mut success_count = 0u32;
+    let mut batch = BatchMutationResult::default();
     let now = FileTime::now();
 
     for target_path in &target_paths {
-        if *target_path == source_path {
-            continue;
-        }
         let path = Path::new(target_path);
-        let Ok((target_json, had_crc)) = load_settings_json(path) else {
-            continue;
-        };
-
-        let mut result = target_json.clone();
-        if copy_selected_groups(&mut result, &source_json, &included).is_err() {
-            continue;
-        }
-
-        let Ok(value) = blue_marshal::from_json(&result) else {
-            continue;
-        };
-        let options = blue_marshal::EncodeOptions {
-            checksum: had_crc,
-            ..Default::default()
-        };
-        let Ok(bytes) = blue_marshal::encode(&value, &options) else {
-            continue;
-        };
-
-        // Back up the target before touching it, unless disabled
-        if backup && auto_backup(path, "pre-selective-copy").is_err() {
-            continue;
-        }
-        if atomic_write(path, &bytes).is_ok() {
+        let outcome = (|| -> Result<(), String> {
+            if *target_path == source_path {
+                return Err("Source and target are the same file".into());
+            }
+            let (target_json, had_crc) = load_settings_json(path)?;
+            let mut result = target_json;
+            copy_selected_groups(&mut result, &source_json, &included)?;
+            let value = blue_marshal::from_json(&result)
+                .map_err(|e| format!("Failed to rebuild target settings: {}", e))?;
+            let options = blue_marshal::EncodeOptions {
+                checksum: had_crc,
+                ..Default::default()
+            };
+            let bytes = blue_marshal::encode(&value, &options)
+                .map_err(|e| format!("Failed to encode target settings: {}", e))?;
+            if backup {
+                auto_backup(path, "pre-selective-copy")?;
+            }
+            atomic_write(path, &bytes)?;
             let _ = filetime::set_file_mtime(path, now);
-            success_count += 1;
+            Ok(())
+        })();
+
+        match outcome {
+            Ok(()) => batch.succeeded.push(target_path.clone()),
+            Err(error) => batch.failed.push(MutationFailure {
+                path: target_path.clone(),
+                error,
+            }),
         }
     }
 
-    if success_count > 0 {
+    if !batch.succeeded.is_empty() {
         emit_data_changed(&app);
     }
-    Ok(success_count)
+    Ok(batch)
 }
 
 // Current display name (alias if set, otherwise the raw id) for a settings
@@ -1449,6 +1519,7 @@ pub fn write_probe_formations(
     backup: Option<bool>,
     expected_sha256: Option<String>,
 ) -> Result<FormationWriteResult, String> {
+    ensure_eve_closed()?;
     let path = Path::new(&file_path);
     if !path.exists() {
         return Err("Settings file does not exist".into());
@@ -1499,7 +1570,38 @@ pub fn export_probe_formation(
 }
 
 #[tauri::command]
-pub fn import_probe_formation(import_path: String) -> Result<ProbeFormation, String> {
+pub fn export_probe_formations(
+    export_path: String,
+    formations: Vec<ProbeFormation>,
+) -> Result<(), String> {
+    validate_formations(&formations)?;
+    let pack = PortableFormationPack {
+        schema_version: 1,
+        formations: formations
+            .into_iter()
+            .map(|formation| PortableFormation {
+                schema_version: 1,
+                name: formation.name,
+                probes: formation
+                    .probes
+                    .into_iter()
+                    .map(|probe| PortableProbe {
+                        x_km: probe.x / 1000.0,
+                        y_km: probe.y / 1000.0,
+                        z_km: probe.z / 1000.0,
+                        range_au: probe.range / AU_METERS,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let data = serde_json::to_vec_pretty(&pack)
+        .map_err(|e| format!("Failed to serialize formation pack: {}", e))?;
+    atomic_write(Path::new(&export_path), &data)
+}
+
+#[tauri::command]
+pub fn import_probe_formation(import_path: String) -> Result<Vec<ProbeFormation>, String> {
     let path = Path::new(&import_path);
     if fs::metadata(path)
         .map_err(|e| format!("Failed to open formation: {}", e))?
@@ -1509,30 +1611,49 @@ pub fn import_probe_formation(import_path: String) -> Result<ProbeFormation, Str
         return Err("Formation JSON is larger than 1 MiB".into());
     }
     let data = fs::read(path).map_err(|e| format!("Failed to read formation: {}", e))?;
-    let portable: PortableFormation =
+    let value: serde_json::Value =
         serde_json::from_slice(&data).map_err(|e| format!("Invalid formation JSON: {}", e))?;
-    if portable.schema_version != 1 {
-        return Err(format!(
-            "Unsupported formation schema version {}",
-            portable.schema_version
-        ));
-    }
-    let formation = ProbeFormation {
-        id: 0,
-        name: portable.name,
-        probes: portable
-            .probes
-            .into_iter()
-            .map(|p| FormationProbe {
-                x: p.x_km * 1000.0,
-                y: p.y_km * 1000.0,
-                z: p.z_km * 1000.0,
-                range: p.range_au * AU_METERS,
-            })
-            .collect(),
+    let portable_formations = if value.get("formations").is_some() {
+        let pack: PortableFormationPack =
+            serde_json::from_value(value).map_err(|e| format!("Invalid formation pack: {}", e))?;
+        if pack.schema_version != 1 {
+            return Err(format!(
+                "Unsupported formation pack schema version {}",
+                pack.schema_version
+            ));
+        }
+        pack.formations
+    } else {
+        vec![serde_json::from_value(value).map_err(|e| format!("Invalid formation JSON: {}", e))?]
     };
-    validate_formations(std::slice::from_ref(&formation))?;
-    Ok(formation)
+    let formations: Vec<ProbeFormation> = portable_formations
+        .into_iter()
+        .enumerate()
+        .map(|(id, portable)| {
+            if portable.schema_version != 1 {
+                return Err(format!(
+                    "Unsupported formation schema version {}",
+                    portable.schema_version
+                ));
+            }
+            Ok(ProbeFormation {
+                id: id as i64,
+                name: portable.name,
+                probes: portable
+                    .probes
+                    .into_iter()
+                    .map(|p| FormationProbe {
+                        x: p.x_km * 1000.0,
+                        y: p.y_km * 1000.0,
+                        z: p.z_km * 1000.0,
+                        range: p.range_au * AU_METERS,
+                    })
+                    .collect(),
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    validate_formations(&formations)?;
+    Ok(formations)
 }
 
 #[cfg(test)]
@@ -1621,6 +1742,36 @@ mod formation_tests {
             .unwrap();
         assert!(stored.contains_key("int:-4"));
         assert!(stored.contains_key("int:0"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn formation_pack_imports_multiple_formations() {
+        let dir = std::env::temp_dir().join("eve-wrench-formation-pack-test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("formations.json");
+        let pack = json!({
+            "schema_version": 1,
+            "formations": [
+                {
+                    "schema_version": 1,
+                    "name": "Alpha",
+                    "probes": [{"x_km": 100.0, "y_km": 0.0, "z_km": 0.0, "range_au": 0.25}]
+                },
+                {
+                    "schema_version": 1,
+                    "name": "Bravo",
+                    "probes": [{"x_km": 0.0, "y_km": 200.0, "z_km": 0.0, "range_au": 0.5}]
+                }
+            ]
+        });
+        fs::write(&path, serde_json::to_vec(&pack).unwrap()).unwrap();
+
+        let imported = import_probe_formation(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(imported.len(), 2);
+        assert_eq!(imported[0].name, "Alpha");
+        assert_eq!(imported[1].probes[0].y, 200_000.0);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -1753,41 +1904,48 @@ pub fn copy_settings(
     source_path: String,
     target_paths: Vec<String>,
     backup: Option<bool>,
-) -> Result<u32, String> {
+) -> Result<BatchMutationResult, String> {
     use filetime::FileTime;
 
+    ensure_eve_closed()?;
     let src = PathBuf::from(&source_path);
 
     if !src.exists() {
         return Err("Source file not found".into());
     }
 
-    let mut success_count = 0u32;
+    let bytes = fs::read(&src).map_err(|e| format!("Failed to read source file: {}", e))?;
+    let mut batch = BatchMutationResult::default();
     let now = FileTime::now();
+    let backup = backup.unwrap_or(true);
 
     for target_path in target_paths {
         let dest = PathBuf::from(&target_path);
-
-        if src == dest {
-            continue;
-        }
-
-        if backup.unwrap_or(true) && auto_backup(&dest, "pre-restore").is_err() {
-            continue;
-        }
-        let Ok(bytes) = fs::read(&src) else {
-            continue;
-        };
-        if atomic_write(&dest, &bytes).is_ok() {
+        let outcome = (|| -> Result<(), String> {
+            if src == dest {
+                return Err("Source and target are the same file".into());
+            }
+            if backup {
+                auto_backup(&dest, "pre-restore")?;
+            }
+            atomic_write(&dest, &bytes)?;
             let _ = filetime::set_file_mtime(&dest, now);
-            success_count += 1;
+            Ok(())
+        })();
+
+        match outcome {
+            Ok(()) => batch.succeeded.push(target_path),
+            Err(error) => batch.failed.push(MutationFailure {
+                path: target_path,
+                error,
+            }),
         }
     }
 
-    if success_count > 0 {
+    if !batch.succeeded.is_empty() {
         emit_data_changed(&app);
     }
-    Ok(success_count)
+    Ok(batch)
 }
 
 #[tauri::command]
@@ -1818,6 +1976,7 @@ pub fn set_brackets_always_show(
     server_path: String,
     enabled: bool,
 ) -> Result<(), String> {
+    ensure_eve_closed()?;
     let path = PathBuf::from(&server_path);
     write_brackets_setting(&path, enabled)?;
     emit_data_changed(&app);
@@ -2249,6 +2408,7 @@ pub fn execute_import(
     custom_eve_path: Option<String>,
     overwrite_paths: Vec<String>,
 ) -> Result<ImportResultInfo, String> {
+    ensure_eve_closed()?;
     let eve_root =
         eve_settings_root(custom_eve_path.as_deref()).ok_or("EVE settings directory not found")?;
 

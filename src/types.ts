@@ -114,6 +114,16 @@ export interface FormationWriteResult {
     file_sha256: string
 }
 
+export interface MutationFailure {
+    path: string
+    error: string
+}
+
+export interface BatchMutationResult {
+    succeeded: string[]
+    failed: MutationFailure[]
+}
+
 export type SourceItem = SettingsEntry | BackupEntry
 
 export function isBackup(item: SourceItem): item is BackupEntry {

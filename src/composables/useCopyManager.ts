@@ -13,6 +13,7 @@ import type {
     ExportResult,
     ImportAnalysis,
     ImportResultInfo,
+    BatchMutationResult,
 } from '@/types'
 import { isBackup } from '@/types'
 import { defaultGroupSelection, groupsForKind } from '@/lib/copyGroups'
@@ -24,6 +25,7 @@ import {
 import { useConfirm } from './useConfirm'
 import { usePrompt } from './usePrompt'
 import { useI18n } from './useI18n'
+import { useEveRunning } from './useEveRunning'
 
 const appData = ref<AppData | null>(null)
 const loading = ref(true)
@@ -50,6 +52,7 @@ export function useCopyManager() {
     const { confirm } = useConfirm()
     const { prompt } = usePrompt()
     const { t } = useI18n()
+    const { eveRunning } = useEveRunning()
 
     const sourceKind = computed<SettingsKind | null>(() => {
         if (!source.value) return null
@@ -67,7 +70,10 @@ export function useCopyManager() {
 
     const canCopy = computed(() => {
         return (
-            source.value !== null && targets.value.length > 0 && !copying.value
+            source.value !== null &&
+            targets.value.length > 0 &&
+            !copying.value &&
+            !eveRunning.value
         )
     })
 
@@ -242,16 +248,40 @@ export function useCopyManager() {
         try {
             const sourcePath = source.value.path
             const targetPaths = targets.value.map((t) => t.path)
-            const count = await invoke<number>('copy_settings_selective', {
-                sourcePath,
-                targetPaths,
-                excludedGroups: excludedCopyGroups.value,
-                backup: autoBackup.value,
-            })
-            toast.success(t('toast.settingsCopied'), {
-                description: t('toast.settingsCopiedDesc', { count }),
-            })
-            targets.value = []
+            const result = await invoke<BatchMutationResult>(
+                'copy_settings_selective',
+                {
+                    sourcePath,
+                    targetPaths,
+                    excludedGroups: excludedCopyGroups.value,
+                    backup: autoBackup.value,
+                }
+            )
+            if (result.failed.length) {
+                const description = t('toast.settingsCopyPartialDesc', {
+                    succeeded: result.succeeded.length,
+                    failed: result.failed.length,
+                    reason: result.failed[0].error,
+                })
+                if (result.succeeded.length) {
+                    toast.warning(t('toast.settingsCopyPartial'), {
+                        description,
+                    })
+                } else {
+                    toast.error(t('toast.copyFailed'), { description })
+                }
+                const failedPaths = new Set(result.failed.map((f) => f.path))
+                targets.value = targets.value.filter((target) =>
+                    failedPaths.has(target.path)
+                )
+            } else {
+                toast.success(t('toast.settingsCopied'), {
+                    description: t('toast.settingsCopiedDesc', {
+                        count: result.succeeded.length,
+                    }),
+                })
+                targets.value = []
+            }
         } catch (e: unknown) {
             toast.error(t('toast.copyFailed'), { description: String(e) })
         } finally {
@@ -364,11 +394,17 @@ export function useCopyManager() {
         if (!confirmed) return
 
         try {
-            await invoke<number>('copy_settings', {
+            const result = await invoke<BatchMutationResult>('copy_settings', {
                 sourcePath: backup.path,
                 targetPaths: [entry.path],
                 backup: autoBackup.value,
             })
+            if (result.succeeded.length !== 1) {
+                throw new Error(
+                    result.failed[0]?.error ??
+                        'The settings file was not changed'
+                )
+            }
             toast.success(t('toast.backupRestored'), {
                 description: t('toast.backupRestoredDesc', {
                     name: backup.name,
@@ -392,11 +428,17 @@ export function useCopyManager() {
         if (!confirmed) return
 
         try {
-            await invoke<number>('copy_settings', {
+            const result = await invoke<BatchMutationResult>('copy_settings', {
                 sourcePath: backup.path,
                 targetPaths: [target.path],
                 backup: autoBackup.value,
             })
+            if (result.succeeded.length !== 1) {
+                throw new Error(
+                    result.failed[0]?.error ??
+                        'The settings file was not changed'
+                )
+            }
             toast.success(t('toast.backupApplied'), {
                 description: t('toast.backupAppliedDesc', {
                     backup: backup.name,
@@ -562,5 +604,6 @@ export function useCopyManager() {
         importAnalysis,
         showImportDialog,
         copyGroupSelection,
+        eveRunning,
     }
 }

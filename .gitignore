@@ -22,3 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+account-link-search.txt
+src-tauri/examples/inspect_account_links.rs

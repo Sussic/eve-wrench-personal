@@ -9,6 +9,10 @@ export default {
         enabled: 'enabled',
         disabled: 'disabled',
     },
+    safety: {
+        eveRunning:
+            'EVE Online is running. Close every client before changing settings.',
+    },
     // Dialog
     dialog: {
         confirm: 'Confirm',
@@ -59,6 +63,9 @@ export default {
         invalidTargetDesc: 'Cannot use the same file as source and target',
         settingsCopied: 'Settings copied',
         settingsCopiedDesc: 'Successfully copied to {count} target(s)',
+        settingsCopyPartial: 'Some targets were not changed',
+        settingsCopyPartialDesc:
+            '{succeeded} succeeded, {failed} failed. First error: {reason}',
         copyFailed: 'Copy failed',
         backupCreated: 'Backup created',
         backupCreatedDesc: '"{name}" has been saved',
@@ -191,9 +198,16 @@ export default {
         invalidProbe: 'Probe coordinates and scan ranges must be valid',
         import: 'Import formation JSON',
         export: 'Export formation JSON',
+        exportSelected: 'Export selected formation',
+        exportAll: 'Export all {count} formations',
         importFailed: 'Failed to import formation',
+        importTooMany:
+            'The imported pack does not fit in the 10 formation slots',
+        imported: 'Formations imported',
+        importedDesc: 'Imported {count} formation(s)',
         exportFailed: 'Failed to export formation',
         exported: 'Formation exported',
+        exportedAll: 'Formation pack exported',
         undo: 'Undo',
         redo: 'Redo',
         centre: 'Centre',
@@ -213,11 +227,14 @@ export default {
         },
         duplicate: 'Duplicate formation',
         deleteFormation: 'Delete formation',
+        confirmDeleteFormation:
+            'Delete this formation? You can still undo before saving.',
         moveUp: 'Move up',
         moveDown: 'Move down',
         name: 'Formation name',
         addProbe: 'Add probe',
         maxProbes: 'A formation holds at most 8 probes',
+        coordinateUnits: 'Coordinate units',
         allRanges: 'All ranges',
         scale: 'Scale by',
         apply: 'Apply',
@@ -225,13 +242,20 @@ export default {
         axisWE: 'West (+) / East (−) · km',
         axisUD: 'Up (+) / Down (−) · km',
         zoom: 'Zoom',
+        dragAxis: 'Drag',
+        dragFree: 'Free plane',
         previewHint: 'Drag a probe to move it; drag empty space to rotate',
         save: 'Save to file',
         reset: 'Reset',
         unsaved: 'Unsaved',
         closeUnsaved: 'Close without saving your formation changes?',
         saved: 'Formations saved',
-        savedDesc: 'A backup of the previous file was created automatically',
+        savedDescBackup:
+            'Saved successfully and backed up the previous settings file',
+        savedDescNoBackup: 'Saved successfully without creating a backup',
+        eveRunningTitle: 'Close EVE before saving',
+        eveRunningDesc:
+            'EVE Online is running. Close every client so it cannot overwrite these changes.',
         fileChanged:
             'This file changed on disk. Reload to discard your unsaved edits.',
         reload: 'Reload',
