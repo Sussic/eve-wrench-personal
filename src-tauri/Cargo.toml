@@ -1,6 +1,6 @@
 [package]
 name = "eve-wrench"
-version = "0.3.5"
+version = "0.3.6"
 description = "EVE Online Settings Manager - Backup, restore, and sync settings"
 authors = ["Tim Kunze"]
 edition = "2021"
