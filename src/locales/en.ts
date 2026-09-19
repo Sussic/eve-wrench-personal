@@ -311,7 +311,7 @@ export default {
             incompatible: 'Mixed ranges: no single probe type supports all',
         },
         gridBookmarkWarning:
-            'Distances start at 150 km so the points work as warp-ins from the centre. On grid, right-click each visible probe to bookmark its position. Other pilots who see the probes may do the same—recall them when finished.',
+            'Use any positive radius or step distance, including fractional kilometres, for bookmarks. On grid, right-click each visible probe to bookmark its position. Other pilots who see the probes may do the same—recall them when finished.',
         geometryOptions: {
             pinpoint: 'EVE-style pinpoint',
             tetrahedral: 'Geometry-balanced tetrahedral',
