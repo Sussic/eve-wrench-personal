@@ -95,7 +95,6 @@ const MAX_FORMATIONS = 10
 const MAX_PROBES = 8
 const RANGE_OPTIONS: number[] = [...ALL_SCAN_RANGES]
 const BUILDER_DISTANCES = [150, 250, 500, 1000, 2500]
-const MIN_PERCH_DISTANCE_KM = 150
 
 // Edit state uses km for positions and AU for ranges; meters on the wire
 type EditProbe = FormationProbe
@@ -210,8 +209,7 @@ const builderIsGridLayout = computed(() =>
 const builderDistanceValid = computed(
     () =>
         !builderUsesDistance.value ||
-        (Number.isFinite(builderDistance.value) &&
-            builderDistance.value >= MIN_PERCH_DISTANCE_KM)
+        (Number.isFinite(builderDistance.value) && builderDistance.value > 0)
 )
 const builderSuggestedName = computed(() => {
     const values = {
@@ -1474,8 +1472,8 @@ function toggleTheme() {
                                 <input
                                     v-model.number="builderDistance"
                                     type="number"
-                                    :min="MIN_PERCH_DISTANCE_KM"
-                                    step="50"
+                                    min="0"
+                                    step="any"
                                     class="h-8 rounded-md border border-input bg-background px-2 font-mono text-xs"
                                 />
                             </label>
